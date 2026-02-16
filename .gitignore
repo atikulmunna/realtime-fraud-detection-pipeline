@@ -1,0 +1,29 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual env
+.venv/
+venv/
+
+# Data artifacts
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Model artifacts
+models/*
+!models/.gitkeep
+
+# Local env
+.env
+
+# Temporarily excluded docs
+README.md
+PROJECT_PLAN_V1.1.md
+
+# IDE
+.vscode/
+.idea/

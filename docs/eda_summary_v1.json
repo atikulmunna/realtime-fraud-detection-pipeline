@@ -1,0 +1,52 @@
+{
+  "rows": 6362620,
+  "cols": 11,
+  "fraud_count": 8213,
+  "fraud_rate": 0.001290820448180152,
+  "class_imbalance_ratio": 773.7010836478753,
+  "step_range": {
+    "min": 1,
+    "max": 743
+  },
+  "timestamp_hours_span_from_step": 742,
+  "invalid_fraud_types": [],
+  "fraud_by_type": [
+    {
+      "type": "CASH_IN",
+      "count": 1399284,
+      "fraud_count": 0,
+      "fraud_rate": 0.0
+    },
+    {
+      "type": "CASH_OUT",
+      "count": 2237500,
+      "fraud_count": 4116,
+      "fraud_rate": 0.0018395530726256983
+    },
+    {
+      "type": "DEBIT",
+      "count": 41432,
+      "fraud_count": 0,
+      "fraud_rate": 0.0
+    },
+    {
+      "type": "PAYMENT",
+      "count": 2151495,
+      "fraud_count": 0,
+      "fraud_rate": 0.0
+    },
+    {
+      "type": "TRANSFER",
+      "count": 532909,
+      "fraud_count": 4097,
+      "fraud_rate": 0.007687991758442811
+    }
+  ],
+  "amount_stats": {
+    "min": 0.0,
+    "p50": 74871.94,
+    "p95": 518634.19649999996,
+    "p99": 1615979.4715999917,
+    "max": 92445516.64
+  }
+}

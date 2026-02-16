@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Dead Letter Event v1",
+  "type": "object",
+  "required": ["error", "raw_event", "received_at"],
+  "properties": {
+    "error": {"type": "string"},
+    "raw_event": {},
+    "received_at": {"type": "string"}
+  },
+  "additionalProperties": true
+}
