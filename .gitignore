@@ -28,10 +28,6 @@ reports/*
 mlruns/
 mlflow.db
 
-# Temporarily excluded docs
-README.md
-PROJECT_PLAN_V1.1.md
-
 # IDE
 .vscode/
 .idea/
