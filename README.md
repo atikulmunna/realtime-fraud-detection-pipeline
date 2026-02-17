@@ -1,11 +1,28 @@
 # Realtime Fraud Detection Pipeline
 
-Real-time fraud detection workflow with:
-- offline training on PaySim
-- streaming scoring pipeline
-- feedback API
-- online SGD updater
-- Prometheus/Grafana observability
+Real-time fraud detection workflow with offline model training, streaming inference, feedback-driven online updates, and observability via Prometheus/Grafana.
+
+## What
+This project provides an end-to-end fraud detection pipeline:
+- Data preparation and feature engineering on PaySim.
+- Baseline model training (Isolation Forest, AutoEncoder-style MLP, SGD classifier).
+- Stream-style event scoring and anomaly routing.
+- Analyst feedback ingestion.
+- Online SGD model updates.
+- Monitoring dashboards for pipeline and model-update activity.
+
+## Why
+- Detect suspicious transactions quickly.
+- Close the loop between analyst feedback and model behavior.
+- Track latency, anomaly flow, and update events with observable metrics.
+- Provide a reproducible local setup for experimentation and extension.
+
+## How
+- Prepare PaySim data and build engineered features.
+- Train baseline models and persist artifacts under `models/`.
+- Run API and online service endpoints.
+- Score events, route anomalies, collect feedback, and apply online updates.
+- Scrape metrics with Prometheus and visualize in Grafana.
 
 ## Requirements
 - Python 3.11+
@@ -131,6 +148,14 @@ scripts/tasks.ps1 -Task seed-online-metrics
 - API metrics: `http://127.0.0.1:8000/metrics`
 - Prometheus: `http://127.0.0.1:9090`
 - Grafana: `http://127.0.0.1:3000`
+
+## Dashboard Snapshots
+### Grafana Overview
+![Grafana Dashboard](assets/grafana_dashboard.png)
+
+### Prometheus Targets / Metrics
+![Prometheus Dashboard 1](assets/prometheus_1.png)
+![Prometheus Dashboard 2](assets/prometheus_2.png)
 
 ## Common Issues
 - `NoBrokersAvailable`: start Kafka via Docker Compose.
