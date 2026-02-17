@@ -24,6 +24,72 @@ This project provides an end-to-end fraud detection pipeline:
 - Score events, route anomalies, collect feedback, and apply online updates.
 - Scrape metrics with Prometheus and visualize in Grafana.
 
+## Architecture
+```mermaid
+%%{init: {'theme':'base','themeVariables':{
+  'primaryColor':'#e8f1ff',
+  'primaryBorderColor':'#2563eb',
+  'primaryTextColor':'#0f172a',
+  'lineColor':'#334155',
+  'tertiaryColor':'#f8fafc'
+}}}%%
+flowchart LR
+  classDef data fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef train fill:#ede9fe,stroke:#7c3aed,stroke-width:1.5px,color:#3b0764;
+  classDef serve fill:#e0f2fe,stroke:#0284c7,stroke-width:1.5px,color:#0c4a6e;
+  classDef obs fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+  classDef infra fill:#fff7ed,stroke:#ea580c,stroke-width:1.5px,color:#7c2d12;
+
+  subgraph L1[Data Layer]
+    RAW[PaySim Raw CSV]:::data
+    PREP[Prepare + Validate]:::data
+    FEAT[Feature Engineering\npaysim_features.parquet]:::data
+    RAW --> PREP --> FEAT
+  end
+
+  subgraph L2[Training Layer]
+    IF[Isolation Forest]:::train
+    AE[AutoEncoder MLP]:::train
+    SGD[SGD Classifier]:::train
+    ART[(Model Artifacts\nmodels/*.joblib)]:::train
+    FEAT --> IF
+    FEAT --> AE
+    FEAT --> SGD
+    IF --> ART
+    AE --> ART
+    SGD --> ART
+  end
+
+  subgraph L3[Serving + Feedback Layer]
+    STREAM[Stream Event Processing\nparse -> features -> score -> route]:::serve
+    API[Feedback API\n:8000]:::serve
+    ONLINE[Online Service + Updater\n:8001]:::serve
+    ART --> STREAM
+    ART --> ONLINE
+    STREAM -->|Anomalies| API
+    API -->|Labels + Features| ONLINE
+    ONLINE -->|partial_fit updates| ART
+  end
+
+  subgraph L4[Observability Layer]
+    PROM[Prometheus\n:9090]:::obs
+    GRAF[Grafana\n:3000]:::obs
+    API -->|/metrics| PROM
+    ONLINE -->|/metrics| PROM
+    PROM --> GRAF
+  end
+
+  subgraph L5[Infra Layer]
+    KAFKA[Kafka]:::infra
+    FLINK[Flink]:::infra
+    DOCKER[Docker Compose]:::infra
+    DOCKER --> KAFKA
+    DOCKER --> FLINK
+    DOCKER --> PROM
+    DOCKER --> GRAF
+  end
+```
+
 ## Requirements
 - Python 3.11+
 - Conda (separate environment recommended)
