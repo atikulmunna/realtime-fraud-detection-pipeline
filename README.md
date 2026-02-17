@@ -35,6 +35,9 @@ scripts/tasks.ps1 -Task local-demo
 # Start feedback API
 scripts/tasks.ps1 -Task start-api
 
+# Start always-on online service metrics endpoint (for Prometheus online_updater target)
+scripts/tasks.ps1 -Task start-online-service
+
 # API healthcheck
 scripts/tasks.ps1 -Task healthcheck-api
 
@@ -55,6 +58,9 @@ scripts/tasks.ps1 -Task benchmark-report-trained
 
 # Readiness check with trained model artifacts in models/
 scripts/tasks.ps1 -Task demo-readiness-trained
+
+# Seed online service counters so Prometheus/Grafana panels show data quickly
+scripts/tasks.ps1 -Task seed-online-metrics
 ```
 
 ## Outputs

@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory=$true)]
-  [ValidateSet('init','test','smoke','download-data','local-demo','local-demo-compose','start-api','start-updater','start-updater-sample','healthcheck-api','benchmark-report','benchmark-report-trained','demo-readiness','demo-readiness-trained')]
+  [ValidateSet('init','test','smoke','download-data','local-demo','local-demo-compose','start-api','start-online-service','seed-online-metrics','start-updater','start-updater-sample','healthcheck-api','benchmark-report','benchmark-report-trained','demo-readiness','demo-readiness-trained')]
   [string]$Task
 )
 
@@ -26,6 +26,14 @@ switch ($Task) {
   }
   'start-api' {
     .\scripts\start_feedback_api.ps1
+  }
+  'start-online-service' {
+    .\scripts\start_online_service.ps1
+  }
+  'seed-online-metrics' {
+    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8001/stream/sample" -ErrorAction Stop | Out-Null
+    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8001/feedback/sample" -ErrorAction Stop | Out-Null
+    Write-Output "Seeded online service metrics."
   }
   'start-updater' {
     .\scripts\start_online_updater.ps1
