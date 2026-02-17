@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory=$true)]
-  [ValidateSet('init','test','smoke','download-data','local-demo','local-demo-compose','start-api','start-updater','start-updater-sample','healthcheck-api','benchmark-report','demo-readiness')]
+  [ValidateSet('init','test','smoke','download-data','local-demo','local-demo-compose','start-api','start-updater','start-updater-sample','healthcheck-api','benchmark-report','benchmark-report-trained','demo-readiness','demo-readiness-trained')]
   [string]$Task
 )
 
@@ -39,7 +39,13 @@ switch ($Task) {
   'benchmark-report' {
     python -m src.evaluation.benchmark_report --output reports/benchmark_report.json
   }
+  'benchmark-report-trained' {
+    python -m src.evaluation.benchmark_report --use-trained-models --output reports/benchmark_report.json
+  }
   'demo-readiness' {
     python -m src.demo.readiness_check --output reports/demo_readiness_report.json
+  }
+  'demo-readiness-trained' {
+    python -m src.demo.readiness_check --use-trained-models --output reports/demo_readiness_report.json
   }
 }

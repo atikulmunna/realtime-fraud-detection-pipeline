@@ -49,6 +49,12 @@ scripts/tasks.ps1 -Task benchmark-report
 
 # End-to-end readiness check
 scripts/tasks.ps1 -Task demo-readiness
+
+# Benchmark with trained model artifacts in models/
+scripts/tasks.ps1 -Task benchmark-report-trained
+
+# Readiness check with trained model artifacts in models/
+scripts/tasks.ps1 -Task demo-readiness-trained
 ```
 
 ## Outputs
@@ -65,4 +71,3 @@ scripts/tasks.ps1 -Task demo-readiness
 - `NoBrokersAvailable`: start Kafka via Docker Compose.
 - Missing model files in updater: generate baseline models first.
 - Port conflict (`8000`, `9090`, `3000`): stop the process using the port.
-

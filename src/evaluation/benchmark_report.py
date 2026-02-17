@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from src.streaming.ensemble_scoring import EnsembleModels
+from src.streaming.ensemble_scoring import EnsembleModels, load_ensemble_models
 from src.streaming.pipeline_skeleton import process_stream_payload
 
 
@@ -49,6 +49,10 @@ class BenchmarkConfig:
     score_threshold: float = 0.65
     seed: int = 42
     txn_velocity_1h: int = 1
+    use_trained_models: bool = False
+    if_model_path: str | Path = "models/isolation_forest_v1.joblib"
+    ae_model_path: str | Path = "models/autoencoder_v1.joblib"
+    sgd_model_path: str | Path = "models/sgd_classifier_v1.joblib"
 
 
 def _build_models() -> EnsembleModels:
@@ -58,6 +62,24 @@ def _build_models() -> EnsembleModels:
         ae_scaler=_Scaler(),
         ae_threshold_p99=0.01,
         sgd_model=_SgdModel(),
+    )
+
+
+def _load_models_from_artifacts(config: BenchmarkConfig) -> EnsembleModels:
+    paths = {
+        "if_model_path": Path(config.if_model_path),
+        "ae_model_path": Path(config.ae_model_path),
+        "sgd_model_path": Path(config.sgd_model_path),
+    }
+    missing = [f"{name}={path}" for name, path in paths.items() if not path.exists()]
+    if missing:
+        joined = ", ".join(missing)
+        raise FileNotFoundError(f"Missing trained model artifact(s): {joined}")
+
+    return load_ensemble_models(
+        if_model_path=paths["if_model_path"],
+        ae_model_path=paths["ae_model_path"],
+        sgd_model_path=paths["sgd_model_path"],
     )
 
 
@@ -125,7 +147,7 @@ def _precision_recall_at_budget(
 
 
 def run_benchmark(config: BenchmarkConfig) -> dict[str, Any]:
-    models = _build_models()
+    models = _load_models_from_artifacts(config) if config.use_trained_models else _build_models()
     labeled = _generate_labeled_events(config)
 
     latencies_ms: list[float] = []
@@ -167,6 +189,16 @@ def run_benchmark(config: BenchmarkConfig) -> dict[str, Any]:
     )
 
     return {
+        "model_source": "trained_artifacts" if config.use_trained_models else "demo_models",
+        "model_paths": (
+            {
+                "if_model_path": str(config.if_model_path),
+                "ae_model_path": str(config.ae_model_path),
+                "sgd_model_path": str(config.sgd_model_path),
+            }
+            if config.use_trained_models
+            else {}
+        ),
         "events_total": config.n_events,
         "events_scored": len(valid_scores),
         "score_threshold": config.score_threshold,
@@ -201,6 +233,10 @@ def main() -> None:
     parser.add_argument("--alert-budget-ratio", type=float, default=0.05)
     parser.add_argument("--score-threshold", type=float, default=0.65)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--use-trained-models", action="store_true")
+    parser.add_argument("--if-model-path", default="models/isolation_forest_v1.joblib")
+    parser.add_argument("--ae-model-path", default="models/autoencoder_v1.joblib")
+    parser.add_argument("--sgd-model-path", default="models/sgd_classifier_v1.joblib")
     parser.add_argument("--output", default="reports/benchmark_report.json")
     args = parser.parse_args()
 
@@ -210,6 +246,10 @@ def main() -> None:
         alert_budget_ratio=args.alert_budget_ratio,
         score_threshold=args.score_threshold,
         seed=args.seed,
+        use_trained_models=bool(args.use_trained_models),
+        if_model_path=args.if_model_path,
+        ae_model_path=args.ae_model_path,
+        sgd_model_path=args.sgd_model_path,
     )
     report = run_benchmark(config)
     out = save_benchmark_report(report, output_path=args.output)
@@ -218,4 +258,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
