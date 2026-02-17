@@ -70,6 +70,159 @@
       },
       "id": 2,
       "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(stream_events_in_total[5m])",
+          "legendFormat": "events_in_rate",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(stream_events_anomaly_total[5m])",
+          "legendFormat": "anomaly_rate",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(stream_events_dlq_total[5m])",
+          "legendFormat": "dlq_rate",
+          "refId": "C"
+        }
+      ],
+      "title": "Stream Event Rates (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "stream_last_process_latency_ms",
+          "refId": "A"
+        }
+      ],
+      "title": "Stream Last Processing Latency",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 8
+      },
+      "id": 4,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(stream_process_latency_ms_total[5m]) / clamp_min(rate(stream_events_in_total[5m]), 1e-9)",
+          "refId": "A"
+        }
+      ],
+      "title": "Stream Avg Latency (5m)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 8
+      },
+      "id": 5,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(stream_events_anomaly_total[5m]) / clamp_min(rate(stream_events_in_total[5m]), 1e-9)",
+          "refId": "A"
+        }
+      ],
+      "title": "Stream Anomaly Ratio (5m)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "id": 6,
+      "options": {
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -99,10 +252,10 @@
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 0,
-        "y": 8
+        "x": 8,
+        "y": 16
       },
-      "id": 3,
+      "id": 7,
       "options": {
         "reduceOptions": {
           "calcs": [
@@ -133,44 +286,10 @@
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 8,
-        "y": 8
-      },
-      "id": 4,
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        }
-      },
-      "targets": [
-        {
-          "expr": "online_feedback_skipped_total",
-          "refId": "A"
-        }
-      ],
-      "title": "Skipped Feedback Total",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
         "x": 16,
-        "y": 8
+        "y": 16
       },
-      "id": 5,
+      "id": 8,
       "options": {
         "legend": {
           "displayMode": "list",
@@ -185,9 +304,14 @@
           "expr": "rate(feedback_publish_errors_total[5m])",
           "legendFormat": "publish_error_rate",
           "refId": "A"
+        },
+        {
+          "expr": "rate(online_feedback_skipped_total[5m])",
+          "legendFormat": "feedback_skipped_rate",
+          "refId": "B"
         }
       ],
-      "title": "Feedback Publish Error Rate (5m)",
+      "title": "Error And Skip Rates (5m)",
       "type": "timeseries"
     }
   ],
@@ -207,6 +331,6 @@
   "timezone": "",
   "title": "Realtime Fraud Overview",
   "uid": "realtime-fraud-overview",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }
