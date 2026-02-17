@@ -17,6 +17,10 @@ data/processed/*
 models/*
 !models/.gitkeep
 
+# Benchmark artifacts
+reports/*
+!reports/.gitkeep
+
 # Local env
 .env
 

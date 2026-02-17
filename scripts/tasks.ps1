@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory=$true)]
-  [ValidateSet('init','test','smoke','download-data','local-demo','local-demo-compose','start-api','start-updater','start-updater-sample','healthcheck-api')]
+  [ValidateSet('init','test','smoke','download-data','local-demo','local-demo-compose','start-api','start-updater','start-updater-sample','healthcheck-api','benchmark-report')]
   [string]$Task
 )
 
@@ -35,5 +35,8 @@ switch ($Task) {
   }
   'healthcheck-api' {
     .\scripts\healthcheck_api.ps1
+  }
+  'benchmark-report' {
+    python -m src.evaluation.benchmark_report --output reports/benchmark_report.json
   }
 }
