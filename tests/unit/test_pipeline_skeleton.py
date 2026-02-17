@@ -1,3 +1,4 @@
+from src.common.metrics_stub import MetricsRegistry
 from src.streaming.pipeline_skeleton import process_stream_batch, process_stream_payload
 
 
@@ -14,11 +15,15 @@ def _valid_event(event_id: str = "evt-1") -> dict:
 
 
 def test_process_stream_payload_happy_path():
-    topic, payload = process_stream_payload(_valid_event(), txn_velocity_1h=4)
+    metrics = MetricsRegistry()
+    topic, payload = process_stream_payload(_valid_event(), txn_velocity_1h=4, metrics=metrics)
     assert topic == "feature-events"
     assert "features" in payload
     assert payload["features"]["txn_velocity_1h"] == 4
     assert payload["features"]["is_transfer"] == 1
+    assert metrics.get_counter("stream_events_in_total") == 1.0
+    assert metrics.get_counter("stream_events_valid_total") == 1.0
+    assert metrics.get_gauge("stream_last_process_latency_ms") >= 0.0
 
 
 def test_process_stream_payload_invalid_routes_dlq():
@@ -139,3 +144,28 @@ def test_process_stream_batch_with_scoring_mixed_topics_and_dlq():
     assert len(out["anomalies"]) == 1
     assert len(out["metrics"]) == 0
     assert len(out["dead-letter"]) == 1
+
+
+def test_process_stream_batch_with_metrics_counts_all_routes():
+    batch = [
+        _valid_event("evt-high"),
+        _valid_event("evt-low"),
+        {**_valid_event("evt-bad"), "type": "BAD_TYPE"},
+    ]
+    metrics = MetricsRegistry()
+    out = process_stream_batch(
+        batch,
+        models=_Models(high=True),
+        score_threshold=0.7,
+        anomaly_topic="anomalies",
+        normal_topic="metrics",
+        dlq_topic="dead-letter",
+        metrics=metrics,
+    )
+    assert len(out["anomalies"]) == 2
+    assert len(out["metrics"]) == 0
+    assert len(out["dead-letter"]) == 1
+    assert metrics.get_counter("stream_events_in_total") == 3.0
+    assert metrics.get_counter("stream_events_anomaly_total") == 2.0
+    assert metrics.get_counter("stream_events_dlq_total") == 1.0
+    assert metrics.get_counter("stream_process_latency_ms_total") > 0.0

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from src.common.metrics_stub import MetricsRegistry
 from src.streaming.pipeline_skeleton import process_stream_batch
 
 
@@ -59,6 +60,7 @@ def run_local_wrapper_batch(
     *,
     models: Any,
     config: FlinkJobConfig | None = None,
+    metrics: MetricsRegistry | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     cfg = config or load_config_from_env()
     return process_stream_batch(
@@ -68,4 +70,5 @@ def run_local_wrapper_batch(
         anomaly_topic=cfg.anomaly_topic,
         normal_topic=cfg.metrics_topic,
         dlq_topic=cfg.dlq_topic,
+        metrics=metrics,
     )

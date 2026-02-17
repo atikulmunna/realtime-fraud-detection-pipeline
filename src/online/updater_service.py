@@ -7,6 +7,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
+
+from src.common.metrics_stub import MetricsRegistry
 from src.online.online_sgd_updater import OnlineSGDUpdater, process_feedback_messages
 
 
@@ -43,6 +47,21 @@ def run_updater_service_once(
         "skipped": result.skipped,
         "signal": result.signal,
     }
+
+
+def create_updater_metrics_app(*, metrics: MetricsRegistry | None = None) -> FastAPI:
+    app = FastAPI(title="Realtime Fraud Online Updater Metrics", version="0.1.0")
+    metrics_registry = metrics or MetricsRegistry()
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/metrics", response_class=PlainTextResponse)
+    def metrics_endpoint() -> str:
+        return metrics_registry.render_prometheus()
+
+    return app
 
 
 def main() -> None:
