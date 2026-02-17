@@ -20,6 +20,10 @@ models/*
 # Local env
 .env
 
+# MLflow local tracking artifacts
+mlruns/
+mlflow.db
+
 # Temporarily excluded docs
 README.md
 PROJECT_PLAN_V1.1.md

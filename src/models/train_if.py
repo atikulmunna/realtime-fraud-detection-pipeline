@@ -12,6 +12,7 @@ import pandas as pd
 from sklearn.ensemble import IsolationForest
 
 from src.common.feature_contract import FEATURES_V1
+from src.models.mlflow_logging import log_training_run
 
 
 def _validate_features(df: pd.DataFrame) -> None:
@@ -27,6 +28,10 @@ def train_isolation_forest(
     sample_size: int = 200_000,
     contamination: float = 0.001291,
     random_state: int = 42,
+    use_mlflow: bool = False,
+    mlflow_tracking_uri: str | None = None,
+    mlflow_experiment: str = "realtime-fraud-detection-pipeline",
+    mlflow_run_name: str = "if_baseline_v1",
 ) -> dict[str, Any]:
     df = pd.read_parquet(input_parquet)
     _validate_features(df)
@@ -72,6 +77,22 @@ def train_isolation_forest(
         "features_order": FEATURES_V1,
     }
     out_metrics.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+    log_training_run(
+        use_mlflow=use_mlflow,
+        model_name="IsolationForest",
+        run_name=mlflow_run_name,
+        params={
+            "sample_size": sample_size,
+            "contamination": contamination,
+            "random_state": random_state,
+            "features_order": FEATURES_V1,
+        },
+        metrics=metrics,
+        artifacts=[out_model, out_metrics],
+        tracking_uri=mlflow_tracking_uri,
+        experiment_name=mlflow_experiment,
+    )
     return metrics
 
 
@@ -83,6 +104,10 @@ def main() -> None:
     parser.add_argument("--sample-size", type=int, default=200_000)
     parser.add_argument("--contamination", type=float, default=0.001291)
     parser.add_argument("--random-state", type=int, default=42)
+    parser.add_argument("--mlflow", action="store_true", help="Log run to MLflow.")
+    parser.add_argument("--mlflow-tracking-uri", default=None)
+    parser.add_argument("--mlflow-experiment", default="realtime-fraud-detection-pipeline")
+    parser.add_argument("--mlflow-run-name", default="if_baseline_v1")
     args = parser.parse_args()
 
     metrics = train_isolation_forest(
@@ -92,6 +117,10 @@ def main() -> None:
         sample_size=args.sample_size,
         contamination=args.contamination,
         random_state=args.random_state,
+        use_mlflow=args.mlflow,
+        mlflow_tracking_uri=args.mlflow_tracking_uri,
+        mlflow_experiment=args.mlflow_experiment,
+        mlflow_run_name=args.mlflow_run_name,
     )
     print(
         f"trained_rows={metrics['rows_train']} contamination={metrics['contamination']} "

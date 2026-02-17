@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import pandas as pd
 
@@ -102,7 +102,7 @@ def main() -> None:
     args = parser.parse_args()
 
     result = load_and_validate(args.input)
-    payload = {
+    payload: dict[str, Any] = {
         "ok": result.ok,
         "rows": result.rows,
         "cols": result.cols,

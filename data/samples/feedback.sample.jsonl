@@ -1,0 +1,2 @@
+{"anomaly_id":"evt-high-1","label":"true_positive","analyst_id":"demo-analyst","features":{"amount":900.0,"amount_ratio":0.8991008991008991,"balance_diff_orig":0.0,"is_transfer":1,"is_cashout":0,"hour_of_day":8,"txn_velocity_1h":1}}
+{"anomaly_id":"evt-low-1","label":"false_positive","analyst_id":"demo-analyst","features":{"amount":20.0,"amount_ratio":0.03992015968063872,"balance_diff_orig":0.0,"is_transfer":0,"is_cashout":0,"hour_of_day":8,"txn_velocity_1h":1}}

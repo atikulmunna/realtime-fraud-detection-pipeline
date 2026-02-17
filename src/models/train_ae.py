@@ -14,6 +14,7 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import MinMaxScaler
 
 from src.common.feature_contract import FEATURES_V1
+from src.models.mlflow_logging import log_training_run
 
 
 def _validate_features(df: pd.DataFrame) -> None:
@@ -29,6 +30,10 @@ def train_autoencoder(
     sample_size: int = 200_000,
     random_state: int = 42,
     max_iter: int = 50,
+    use_mlflow: bool = False,
+    mlflow_tracking_uri: str | None = None,
+    mlflow_experiment: str = "realtime-fraud-detection-pipeline",
+    mlflow_run_name: str = "ae_baseline_v1",
 ) -> dict[str, Any]:
     df = pd.read_parquet(input_parquet)
     _validate_features(df)
@@ -97,6 +102,22 @@ def train_autoencoder(
         "features_order": FEATURES_V1,
     }
     out_metrics.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+    log_training_run(
+        use_mlflow=use_mlflow,
+        model_name="AutoEncoder-MLP",
+        run_name=mlflow_run_name,
+        params={
+            "sample_size": sample_size,
+            "random_state": random_state,
+            "max_iter": max_iter,
+            "features_order": FEATURES_V1,
+        },
+        metrics=metrics,
+        artifacts=[out_model, out_metrics],
+        tracking_uri=mlflow_tracking_uri,
+        experiment_name=mlflow_experiment,
+    )
     return metrics
 
 
@@ -108,6 +129,10 @@ def main() -> None:
     parser.add_argument("--sample-size", type=int, default=200_000)
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--max-iter", type=int, default=50)
+    parser.add_argument("--mlflow", action="store_true", help="Log run to MLflow.")
+    parser.add_argument("--mlflow-tracking-uri", default=None)
+    parser.add_argument("--mlflow-experiment", default="realtime-fraud-detection-pipeline")
+    parser.add_argument("--mlflow-run-name", default="ae_baseline_v1")
     args = parser.parse_args()
 
     metrics = train_autoencoder(
@@ -117,6 +142,10 @@ def main() -> None:
         sample_size=args.sample_size,
         random_state=args.random_state,
         max_iter=args.max_iter,
+        use_mlflow=args.mlflow,
+        mlflow_tracking_uri=args.mlflow_tracking_uri,
+        mlflow_experiment=args.mlflow_experiment,
+        mlflow_run_name=args.mlflow_run_name,
     )
     print(
         f"sampled_rows={metrics['rows_sampled']} val_rows={metrics['rows_val']} "
