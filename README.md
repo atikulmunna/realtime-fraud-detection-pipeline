@@ -9,13 +9,13 @@ Real-time fraud detection workflow with:
 
 ## Requirements
 - Python 3.11+
-- Conda (`realtime-fraud` env recommended)
+- Conda (separate environment recommended)
 - Docker Desktop (for Kafka/Flink/Prometheus/Grafana)
 
 ## Setup
 ```powershell
-conda create -n realtime-fraud python=3.11 -y
-conda activate realtime-fraud
+conda create -n <yourenv> python=3.11 -y
+conda activate <yourenv>
 pip install -r requirements.txt
 ```
 
