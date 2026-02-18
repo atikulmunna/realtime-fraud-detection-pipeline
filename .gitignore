@@ -31,3 +31,5 @@ mlflow.db
 # IDE
 .vscode/
 .idea/
+
+wiki.md
