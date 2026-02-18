@@ -124,6 +124,11 @@ python -m src.models.train_ae --input data/processed/paysim_features.parquet
 python -m src.models.train_sgd --input data/processed/paysim_features.parquet
 ```
 
+Shortcut:
+```powershell
+scripts/tasks.ps1 -Task train-all
+```
+
 ### 4. Start services
 Open separate terminals for long-running services:
 - API service:
@@ -170,6 +175,9 @@ scripts/tasks.ps1 -Task demo-readiness-trained
 ```powershell
 # Run tests
 scripts/tasks.ps1 -Task test
+
+# Prepare features + train IF/AE/SGD in one command
+scripts/tasks.ps1 -Task train-all
 
 # Local demo flow
 scripts/tasks.ps1 -Task local-demo

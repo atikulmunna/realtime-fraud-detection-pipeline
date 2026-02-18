@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory=$true)]
-  [ValidateSet('init','test','smoke','download-data','local-demo','local-demo-compose','start-api','start-online-service','seed-online-metrics','start-updater','start-updater-sample','healthcheck-api','benchmark-report','benchmark-report-trained','demo-readiness','demo-readiness-trained')]
+  [ValidateSet('init','test','smoke','download-data','train-all','local-demo','local-demo-compose','start-api','start-online-service','seed-online-metrics','start-updater','start-updater-sample','healthcheck-api','benchmark-report','benchmark-report-trained','demo-readiness','demo-readiness-trained')]
   [string]$Task
 )
 
@@ -17,6 +17,20 @@ switch ($Task) {
   }
   'download-data' {
     .\.venv\Scripts\python -m src.data.download_paysim --out data/raw
+  }
+  'train-all' {
+    $csv = Get-ChildItem -Path "data/raw" -Filter "*.csv" -File -ErrorAction SilentlyContinue |
+      Sort-Object Length -Descending |
+      Select-Object -First 1
+    if (-not $csv) {
+      throw "No CSV found under data/raw. Run 'scripts/tasks.ps1 -Task download-data' first."
+    }
+
+    python -m src.data.prepare_paysim --input $csv.FullName --json
+    python -m src.data.feature_engineering --input $csv.FullName --output data/processed/paysim_features.parquet
+    python -m src.models.train_if --input data/processed/paysim_features.parquet
+    python -m src.models.train_ae --input data/processed/paysim_features.parquet
+    python -m src.models.train_sgd --input data/processed/paysim_features.parquet
   }
   'local-demo' {
     .\scripts\run_local_demo.ps1
