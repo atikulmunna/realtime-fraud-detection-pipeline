@@ -188,6 +188,9 @@ scripts/tasks.ps1 -Task start-api
 # Start always-on online service metrics endpoint (for Prometheus online_updater target)
 scripts/tasks.ps1 -Task start-online-service
 
+# Start continuous Kafka feedback consumer (online learning loop)
+scripts/tasks.ps1 -Task start-feedback-consumer
+
 # API healthcheck
 scripts/tasks.ps1 -Task healthcheck-api
 
