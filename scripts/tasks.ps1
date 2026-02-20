@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory=$true)]
-  [ValidateSet('init','test','smoke','download-data','train-all','local-demo','local-demo-compose','start-api','start-online-service','start-feedback-consumer','seed-online-metrics','start-updater','start-updater-sample','healthcheck-api','benchmark-report','benchmark-report-trained','demo-readiness','demo-readiness-trained')]
+  [ValidateSet('init','test','smoke','download-data','train-all','local-demo','local-demo-compose','start-api','start-online-service','start-feedback-consumer','start-feedback-consumer-guarded','seed-online-metrics','start-updater','start-updater-sample','healthcheck-api','benchmark-report','benchmark-report-trained','demo-readiness','demo-readiness-trained')]
   [string]$Task
 )
 
@@ -46,6 +46,9 @@ switch ($Task) {
   }
   'start-feedback-consumer' {
     .\scripts\start_feedback_consumer.ps1
+  }
+  'start-feedback-consumer-guarded' {
+    .\scripts\start_feedback_consumer.ps1 -PromotionHoldout data/processed/paysim_features.parquet -MinPrecision 0.10 -MinRecall 0.05 -MinPrAuc 0.05
   }
   'seed-online-metrics' {
     Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8001/stream/sample" -ErrorAction Stop | Out-Null

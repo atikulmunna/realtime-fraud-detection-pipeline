@@ -4,7 +4,11 @@ param(
   [int]$BatchSize = 500,
   [string]$BootstrapServers = "localhost:9092",
   [string]$Topic = "feedback",
-  [string]$GroupId = "fraud-online-updater"
+  [string]$GroupId = "fraud-online-updater",
+  [string]$PromotionHoldout = "",
+  [double]$MinPrecision = 0.0,
+  [double]$MinRecall = 0.0,
+  [double]$MinPrAuc = 0.0
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,8 +20,14 @@ $args = @(
   "--batch-size", "$BatchSize",
   "--bootstrap-servers", $BootstrapServers,
   "--topic", $Topic,
-  "--group-id", $GroupId
+  "--group-id", $GroupId,
+  "--min-precision", "$MinPrecision",
+  "--min-recall", "$MinRecall",
+  "--min-pr-auc", "$MinPrAuc"
 )
 
-conda run -n $CondaEnv python @args
+if ($PromotionHoldout -ne "") {
+  $args += @("--promotion-holdout", $PromotionHoldout)
+}
 
+conda run -n $CondaEnv python @args

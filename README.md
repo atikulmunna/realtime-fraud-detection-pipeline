@@ -191,6 +191,9 @@ scripts/tasks.ps1 -Task start-online-service
 # Start continuous Kafka feedback consumer (online learning loop)
 scripts/tasks.ps1 -Task start-feedback-consumer
 
+# Start continuous Kafka feedback consumer with holdout-based promotion guardrails
+scripts/tasks.ps1 -Task start-feedback-consumer-guarded
+
 # API healthcheck
 scripts/tasks.ps1 -Task healthcheck-api
 

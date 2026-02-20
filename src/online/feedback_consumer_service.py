@@ -8,9 +8,11 @@ import time
 from pathlib import Path
 from typing import Any, Protocol
 
+import joblib
 from kafka import KafkaConsumer
 
 from src.common.metrics_stub import MetricsRegistry
+from src.online.model_promotion import PromotionThresholds, evaluate_and_maybe_rollback
 from src.online.online_sgd_updater import OnlineSGDUpdater
 
 
@@ -55,6 +57,8 @@ def run_feedback_consumer_loop(
     max_messages: int | None = None,
     max_idle_polls: int | None = None,
     force_flush_on_exit: bool = True,
+    promotion_holdout_parquet: str | Path | None = None,
+    promotion_thresholds: PromotionThresholds | None = None,
 ) -> dict[str, Any]:
     if poll_timeout_ms <= 0:
         raise ValueError("poll_timeout_ms must be > 0")
@@ -72,6 +76,9 @@ def run_feedback_consumer_loop(
     accepted = 0
     updates = 0
     skipped = 0
+    promotion_passed = 0
+    promotion_failed = 0
+    rollbacks = 0
 
     try:
         while True:
@@ -88,9 +95,26 @@ def run_feedback_consumer_loop(
                     if isinstance(payload, dict) and updater.add_feedback(payload):
                         accepted += 1
                         if updater.ready():
+                            backup_payload = joblib.load(updater.model_path)
                             res = updater.flush(force=False)
                             if res.updated:
                                 updates += 1
+                                if promotion_holdout_parquet is not None:
+                                    decision = evaluate_and_maybe_rollback(
+                                        updater=updater,
+                                        backup_payload=backup_payload,
+                                        holdout_parquet=promotion_holdout_parquet,
+                                        thresholds=promotion_thresholds or PromotionThresholds(),
+                                    )
+                                    if decision.passed:
+                                        promotion_passed += 1
+                                        m.inc("promotion_pass_total")
+                                    else:
+                                        promotion_failed += 1
+                                        m.inc("promotion_fail_total")
+                                        if decision.rolled_back:
+                                            rollbacks += 1
+                                            m.inc("promotion_rollback_total")
                     else:
                         skipped += 1
 
@@ -114,9 +138,26 @@ def run_feedback_consumer_loop(
                 break
 
         if force_flush_on_exit:
+            backup_payload = joblib.load(updater.model_path)
             final = updater.flush(force=True)
             if final.updated:
                 updates += 1
+                if promotion_holdout_parquet is not None:
+                    decision = evaluate_and_maybe_rollback(
+                        updater=updater,
+                        backup_payload=backup_payload,
+                        holdout_parquet=promotion_holdout_parquet,
+                        thresholds=promotion_thresholds or PromotionThresholds(),
+                    )
+                    if decision.passed:
+                        promotion_passed += 1
+                        m.inc("promotion_pass_total")
+                    else:
+                        promotion_failed += 1
+                        m.inc("promotion_fail_total")
+                        if decision.rolled_back:
+                            rollbacks += 1
+                            m.inc("promotion_rollback_total")
     finally:
         consumer.close()
 
@@ -125,6 +166,9 @@ def run_feedback_consumer_loop(
         "accepted": int(accepted),
         "skipped": int(skipped),
         "updates": int(updates),
+        "promotion_passed": int(promotion_passed),
+        "promotion_failed": int(promotion_failed),
+        "rollbacks": int(rollbacks),
         "runtime_s": float(time.monotonic() - started),
     }
 
@@ -143,6 +187,10 @@ def main() -> None:
     parser.add_argument("--max-messages", type=int, default=None)
     parser.add_argument("--max-idle-polls", type=int, default=None)
     parser.add_argument("--no-force-flush-on-exit", action="store_true")
+    parser.add_argument("--promotion-holdout", default=None, help="Parquet path with FEATURES_V1 + isFraud.")
+    parser.add_argument("--min-precision", type=float, default=0.0)
+    parser.add_argument("--min-recall", type=float, default=0.0)
+    parser.add_argument("--min-pr-auc", type=float, default=0.0)
     args = parser.parse_args()
 
     metrics = MetricsRegistry()
@@ -163,6 +211,12 @@ def main() -> None:
         max_messages=args.max_messages,
         max_idle_polls=args.max_idle_polls,
         force_flush_on_exit=not args.no_force_flush_on_exit,
+        promotion_holdout_parquet=args.promotion_holdout,
+        promotion_thresholds=PromotionThresholds(
+            min_precision=float(args.min_precision),
+            min_recall=float(args.min_recall),
+            min_pr_auc=float(args.min_pr_auc),
+        ),
     )
     print(json.dumps(summary, indent=2))
 
