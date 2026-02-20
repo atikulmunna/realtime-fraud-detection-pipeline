@@ -64,11 +64,12 @@ flowchart LR
     STREAM[Stream Event Processing\nparse -> features -> score -> route]:::serve
     API[Feedback API\n:8000]:::serve
     ONLINE[Online Service + Updater\n:8001]:::serve
+    CONSUMER[Feedback Consumer\n:8002]:::serve
     ART --> STREAM
     ART --> ONLINE
     STREAM -->|Anomalies| API
-    API -->|Labels + Features| ONLINE
-    ONLINE -->|partial_fit updates| ART
+    API -->|Labels + Features| CONSUMER
+    CONSUMER -->|partial_fit updates| ART
   end
 
   subgraph L4[Observability Layer]
@@ -76,6 +77,7 @@ flowchart LR
     GRAF[Grafana\n:3000]:::obs
     API -->|/metrics| PROM
     ONLINE -->|/metrics| PROM
+    CONSUMER -->|/metrics| PROM
     PROM --> GRAF
   end
 
@@ -139,6 +141,10 @@ scripts/tasks.ps1 -Task start-api
 ```powershell
 scripts/tasks.ps1 -Task start-online-service
 ```
+- Feedback consumer with promotion guardrails (`online_consumer` Prometheus target):
+```powershell
+scripts/tasks.ps1 -Task start-feedback-consumer-guarded
+```
 
 ### 5. Generate traffic and metrics
 ```powershell
@@ -152,6 +158,7 @@ scripts/tasks.ps1 -Task seed-online-metrics
   - `prometheus`: `UP`
   - `feedback_api`: `UP`
   - `online_updater`: `UP`
+  - `online_consumer`: `UP`
 - Grafana: `http://127.0.0.1:3000` -> dashboard `Realtime Fraud Overview`
 
 In Prometheus Graph, run:
@@ -161,6 +168,17 @@ In Prometheus Graph, run:
 - `stream_events_in_total`
 - `stream_events_anomaly_total`
 - `stream_last_process_latency_ms`
+- `promotion_pass_total`
+- `promotion_fail_total`
+- `promotion_rollback_total`
+
+### 6b. Verify alert rules
+- Prometheus: `http://127.0.0.1:9090` -> `Status -> Rules`
+- Confirm these alert names are loaded:
+  - `FeedbackPublishErrorsDetected`
+  - `OnlineConsumerStalled`
+  - `PromotionFailuresDetected`
+  - `PromotionRollbacksDetected`
 
 ### 7. Run benchmark/readiness reports
 ```powershell
@@ -217,6 +235,9 @@ scripts/tasks.ps1 -Task demo-readiness-trained
 
 # Seed online service counters so Prometheus/Grafana panels show data quickly
 scripts/tasks.ps1 -Task seed-online-metrics
+
+# Reload Prometheus after alert/config updates
+docker compose -f infra/docker-compose.yml restart prometheus
 ```
 
 ## Outputs
@@ -226,6 +247,7 @@ scripts/tasks.ps1 -Task seed-online-metrics
 ## Endpoints
 - API: `http://127.0.0.1:8000`
 - API metrics: `http://127.0.0.1:8000/metrics`
+- Consumer metrics: `http://127.0.0.1:8002/metrics`
 - Prometheus: `http://127.0.0.1:9090`
 - Grafana: `http://127.0.0.1:3000`
 

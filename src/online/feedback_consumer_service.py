@@ -5,7 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from typing import Any, Protocol
 
 import joblib
@@ -26,6 +29,43 @@ class FeedbackConsumer(Protocol):
 
     def close(self) -> None:
         ...
+
+
+def start_metrics_http_server(
+    *,
+    metrics: MetricsRegistry,
+    host: str = "0.0.0.0",
+    port: int = 8002,
+) -> ThreadingHTTPServer:
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path == "/metrics":
+                body = metrics.render_prometheus().encode("utf-8")
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/plain; version=0.0.4")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if self.path == "/health":
+                body = b'{"status":"ok"}'
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            self.send_response(HTTPStatus.NOT_FOUND)
+            self.end_headers()
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
+            return
+
+    server = ThreadingHTTPServer((host, int(port)), _Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server
 
 
 def build_kafka_feedback_consumer(
@@ -68,6 +108,10 @@ def run_feedback_consumer_loop(
         raise ValueError("flush_interval_s must be > 0")
 
     m = metrics or updater.metrics
+    m.inc("online_consumer_messages_total", 0.0)
+    m.inc("promotion_pass_total", 0.0)
+    m.inc("promotion_fail_total", 0.0)
+    m.inc("promotion_rollback_total", 0.0)
     started = time.monotonic()
     last_flush_at = started
     idle_polls = 0
@@ -191,6 +235,8 @@ def main() -> None:
     parser.add_argument("--min-precision", type=float, default=0.0)
     parser.add_argument("--min-recall", type=float, default=0.0)
     parser.add_argument("--min-pr-auc", type=float, default=0.0)
+    parser.add_argument("--metrics-host", default="0.0.0.0")
+    parser.add_argument("--metrics-port", type=int, default=8002)
     args = parser.parse_args()
 
     metrics = MetricsRegistry()
@@ -201,24 +247,33 @@ def main() -> None:
         group_id=args.group_id,
         auto_offset_reset=args.auto_offset_reset,
     )
-    summary = run_feedback_consumer_loop(
-        updater=updater,
-        consumer=consumer,
+    metrics_server = start_metrics_http_server(
         metrics=metrics,
-        poll_timeout_ms=args.poll_timeout_ms,
-        max_records_per_poll=args.max_records_per_poll,
-        flush_interval_s=args.flush_interval_s,
-        max_messages=args.max_messages,
-        max_idle_polls=args.max_idle_polls,
-        force_flush_on_exit=not args.no_force_flush_on_exit,
-        promotion_holdout_parquet=args.promotion_holdout,
-        promotion_thresholds=PromotionThresholds(
-            min_precision=float(args.min_precision),
-            min_recall=float(args.min_recall),
-            min_pr_auc=float(args.min_pr_auc),
-        ),
+        host=args.metrics_host,
+        port=args.metrics_port,
     )
-    print(json.dumps(summary, indent=2))
+    try:
+        summary = run_feedback_consumer_loop(
+            updater=updater,
+            consumer=consumer,
+            metrics=metrics,
+            poll_timeout_ms=args.poll_timeout_ms,
+            max_records_per_poll=args.max_records_per_poll,
+            flush_interval_s=args.flush_interval_s,
+            max_messages=args.max_messages,
+            max_idle_polls=args.max_idle_polls,
+            force_flush_on_exit=not args.no_force_flush_on_exit,
+            promotion_holdout_parquet=args.promotion_holdout,
+            promotion_thresholds=PromotionThresholds(
+                min_precision=float(args.min_precision),
+                min_recall=float(args.min_recall),
+                min_pr_auc=float(args.min_pr_auc),
+            ),
+        ),
+        print(json.dumps(summary, indent=2))
+    finally:
+        metrics_server.shutdown()
+        metrics_server.server_close()
 
 
 if __name__ == "__main__":

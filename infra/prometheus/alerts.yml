@@ -1,0 +1,42 @@
+groups:
+  - name: realtime_fraud_alerts
+    rules:
+      - alert: FeedbackPublishErrorsDetected
+        expr: increase(feedback_publish_errors_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: feedback_api
+        annotations:
+          summary: "Feedback API publish errors detected"
+          description: "feedback_publish_errors_total increased in the last 5 minutes."
+
+      - alert: OnlineConsumerStalled
+        expr: increase(online_consumer_messages_total[5m]) == 0
+        for: 10m
+        labels:
+          severity: warning
+          service: online_consumer
+        annotations:
+          summary: "Online feedback consumer appears stalled"
+          description: "No feedback messages were consumed in the last 5 minutes."
+
+      - alert: PromotionFailuresDetected
+        expr: increase(promotion_fail_total[15m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: online_consumer
+        annotations:
+          summary: "Model promotion failures detected"
+          description: "promotion_fail_total increased in the last 15 minutes."
+
+      - alert: PromotionRollbacksDetected
+        expr: increase(promotion_rollback_total[15m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: online_consumer
+        annotations:
+          summary: "Model promotion rollback executed"
+          description: "promotion_rollback_total increased in the last 15 minutes."
