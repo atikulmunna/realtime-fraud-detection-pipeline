@@ -94,11 +94,15 @@ def evaluate_and_maybe_rollback(
     if passed:
         return PromotionDecision(passed=True, metrics=metrics, reasons=reasons, rolled_back=False)
 
-    # Roll back both in-memory updater state and persisted model artifact.
-    updater.model = backup_payload["model"]
-    updater.model_type = backup_payload.get("model_type", "sgd_classifier")
-    updater.features_order = backup_payload.get("features_order", FEATURES_V1)
-    updater.online_update_count = int(backup_payload.get("online_update_count", 0))
-    joblib.dump(backup_payload, updater.model_path)
+    if updater.candidate_path.exists():
+        updater.reject_candidate(backup_payload)
+    else:
+        # Compatibility path for callers that explicitly update the local artifact.
+        updater.model = backup_payload["model"]
+        updater.model_type = backup_payload.get("model_type", "sgd_classifier")
+        updater.features_order = backup_payload.get("features_order", FEATURES_V1)
+        updater.online_update_count = int(backup_payload.get("online_update_count", 0))
+        temporary = updater.model_path.with_suffix(updater.model_path.suffix + ".tmp")
+        joblib.dump(backup_payload, temporary)
+        temporary.replace(updater.model_path)
     return PromotionDecision(passed=False, metrics=metrics, reasons=reasons, rolled_back=True)
-

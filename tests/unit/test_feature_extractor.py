@@ -1,5 +1,8 @@
+import pandas as pd
 import pytest
 
+from src.common.feature_contract import FEATURES_V1
+from src.data.feature_engineering import add_training_features
 from src.streaming.feature_extractor import enrich_event_with_features, extract_features
 
 
@@ -45,3 +48,31 @@ def test_enrich_event_with_features_attaches_features():
     enriched = enrich_event_with_features(_event(), txn_velocity_1h=2)
     assert "features" in enriched
     assert enriched["features"]["txn_velocity_1h"] == 2
+
+
+def test_offline_and_online_feature_values_match_for_equivalent_event():
+    offline = add_training_features(
+        pd.DataFrame(
+            {
+                "step": [1],
+                "type": ["CASH_OUT"],
+                "amount": [100.0],
+                "nameOrig": ["C123"],
+                "oldbalanceOrg": [500.0],
+                "newbalanceOrig": [400.0],
+            }
+        )
+    ).iloc[0]
+    event = {
+        "event_id": "evt-parity",
+        "timestamp": f"{offline['timestamp'].isoformat()}Z",
+        "user_id": "C123",
+        "type": "CASH_OUT",
+        "amount": 100.0,
+        "old_balance_orig": 500.0,
+        "new_balance_orig": 400.0,
+    }
+
+    online = extract_features(event, txn_velocity_1h=1)
+
+    assert [float(online[name]) for name in FEATURES_V1] == [float(offline[name]) for name in FEATURES_V1]

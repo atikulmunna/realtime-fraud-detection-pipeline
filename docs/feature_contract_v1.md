@@ -43,6 +43,11 @@ This document defines the production feature contract used by both offline train
   - `label`
 - Defaults are not allowed silently. Missing required upstream fields should route event to DLQ.
 
+## Transaction type normalization
+
+- Canonical internal values use PaySim-style underscores: `CASH_OUT` and `CASH_IN`.
+- Legacy wire values `CASH-OUT` and `CASH-IN` remain accepted and are normalized before feature extraction.
+
 ## Versioning policy
 
 - Any feature addition, removal, rename, order change, or formula change requires a new contract version.

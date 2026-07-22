@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory=$true)]
-  [ValidateSet('init','test','smoke','download-data','train-all','local-demo','local-demo-compose','start-api','start-online-service','start-feedback-consumer','start-feedback-consumer-guarded','seed-online-metrics','start-updater','start-updater-sample','healthcheck-api','benchmark-report','benchmark-report-trained','demo-readiness','demo-readiness-trained')]
+  [ValidateSet('init','test','smoke','compose-smoke','download-data','train-all','local-demo','local-demo-compose','start-api','start-online-service','start-feedback-consumer','start-feedback-consumer-guarded','seed-online-metrics','start-updater','start-updater-sample','healthcheck-api','benchmark-report','benchmark-report-trained','demo-readiness','demo-readiness-trained')]
   [string]$Task
 )
 
@@ -14,6 +14,9 @@ switch ($Task) {
   }
   'smoke' {
     pytest -q tests/unit/test_feature_contract.py tests/unit/test_event_schema.py
+  }
+  'compose-smoke' {
+    .\scripts\smoke-compose.ps1
   }
   'download-data' {
     .\.venv\Scripts\python -m src.data.download_paysim --out data/raw
@@ -71,9 +74,9 @@ switch ($Task) {
     python -m src.evaluation.benchmark_report --use-trained-models --output reports/benchmark_report.json
   }
   'demo-readiness' {
-    python -m src.demo.readiness_check --output reports/demo_readiness_report.json
+    python -m src.demo.readiness_check --allow-demo-mode --output reports/demo_readiness_report.json
   }
   'demo-readiness-trained' {
-    python -m src.demo.readiness_check --use-trained-models --output reports/demo_readiness_report.json
+    python -m src.demo.readiness_check --output reports/demo_readiness_report.json
   }
 }

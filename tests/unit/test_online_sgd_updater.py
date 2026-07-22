@@ -104,3 +104,65 @@ def test_process_feedback_messages_wrapper(tmp_path: Path):
     res = process_feedback_messages(msgs, updater=updater, force_flush=False)
     assert res.updated is True
     assert res.batch_size == 3
+
+
+def test_online_updater_persists_feedback_ids_and_skips_redelivery(tmp_path: Path):
+    model_path = tmp_path / "sgd.joblib"
+    _seed_model(model_path)
+    feedback = {
+        "feedback_id": "feedback-1",
+        "label": "true_positive",
+        "features": {k: 0.9 for k in FEATURES_V1},
+    }
+    updater = OnlineSGDUpdater(model_path=model_path, batch_size=1)
+
+    assert updater.add_feedback(feedback) is True
+    assert updater.flush().updated is True
+    assert not model_path.with_suffix(".joblib.tmp").exists()
+
+    reloaded = OnlineSGDUpdater(model_path=model_path, batch_size=1)
+    assert reloaded.add_feedback(feedback) is False
+    payload = joblib.load(model_path)
+    assert payload["processed_feedback_ids"] == ["feedback-1"]
+    assert payload["update_history"][-1]["feedback_ids"] == ["feedback-1"]
+
+
+def test_staged_candidate_does_not_replace_active_until_promoted(tmp_path: Path):
+    model_path = tmp_path / "sgd.joblib"
+    _seed_model(model_path)
+    original = model_path.read_bytes()
+    updater = OnlineSGDUpdater(model_path=model_path, batch_size=1)
+    feedback = {
+        "feedback_id": "feedback-1",
+        "label": "true_positive",
+        "features": {k: 0.9 for k in FEATURES_V1},
+    }
+
+    updater.add_feedback(feedback)
+    result = updater.flush(stage_candidate=True)
+
+    assert result.updated is True
+    assert updater.candidate_path.is_file()
+    assert model_path.read_bytes() == original
+
+    updater.promote_candidate()
+    assert not updater.candidate_path.exists()
+    promoted = joblib.load(model_path)
+    assert promoted["online_update_count"] == 1
+    assert promoted["processed_feedback_ids"] == ["feedback-1"]
+
+
+def test_staged_candidate_signal_is_published_only_after_promotion(tmp_path: Path):
+    model_path = tmp_path / "sgd.joblib"
+    _seed_model(model_path)
+    publisher = InMemoryModelUpdatePublisher(events=[])
+    updater = OnlineSGDUpdater(model_path=model_path, batch_size=1, publisher=publisher)
+
+    updater.add_feedback(_feedback("true_positive", 0.9))
+    updater.flush(stage_candidate=True)
+    assert publisher.events == []
+
+    updater.promote_candidate()
+    assert publisher.events[0]["model_path"] == str(model_path)
+    assert len(publisher.events[0]["artifact_sha256"]) == 64
+    assert publisher.events[0]["staged_candidate"] is False

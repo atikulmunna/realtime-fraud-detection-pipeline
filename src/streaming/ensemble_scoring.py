@@ -9,7 +9,7 @@ from typing import Any, cast
 import joblib
 import numpy as np
 
-from src.common.feature_contract import FEATURES_V1
+from src.common.feature_contract import FEATURE_CONTRACT_VERSION, FEATURES_V1
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,12 @@ class EnsembleModels:
     ae_scaler: Any
     ae_threshold_p99: float
     sgd_model: Any
+    model_source: str = "trained_artifacts"
+    model_version: str = "v1"
+    feature_contract_version: str = FEATURE_CONTRACT_VERSION
+    calibrators: dict[str, Any] | None = None
+    weights: tuple[float, float, float] = (0.4, 0.3, 0.3)
+    threshold: float = 0.5
 
 
 def load_ensemble_models(
@@ -37,12 +43,32 @@ def load_ensemble_models(
     sgd_payload = joblib.load(sgd_model_path)
     sgd_model = sgd_payload["model"]
 
+    ae_features = ae_payload.get("features_order", FEATURES_V1)
+    sgd_features = sgd_payload.get("features_order", FEATURES_V1)
+    if list(ae_features) != FEATURES_V1 or list(sgd_features) != FEATURES_V1:
+        raise ValueError("Model artifact feature order does not match FEATURES_V1.")
+
+    model_version = str(sgd_payload.get("model_version", ae_payload.get("model_version", "v1")))
+    contract_version = str(
+        sgd_payload.get(
+            "feature_contract_version",
+            ae_payload.get("feature_contract_version", FEATURE_CONTRACT_VERSION),
+        )
+    )
+    if contract_version != FEATURE_CONTRACT_VERSION:
+        raise ValueError(
+            f"Model feature contract version {contract_version!r} does not match {FEATURE_CONTRACT_VERSION!r}."
+        )
+
     return EnsembleModels(
         if_model=if_model,
         ae_model=ae_model,
         ae_scaler=ae_scaler,
         ae_threshold_p99=ae_threshold,
         sgd_model=sgd_model,
+        model_source="trained_artifacts",
+        model_version=model_version,
+        feature_contract_version=contract_version,
     )
 
 
@@ -69,9 +95,13 @@ def score_event_features(
     features: dict[str, Any],
     models: EnsembleModels,
     *,
-    weights: tuple[float, float, float] = (0.4, 0.3, 0.3),
+    weights: tuple[float, float, float] | None = None,
 ) -> dict[str, float]:
-    w_if, w_ae, w_sgd = _normalize_weights(weights)
+    selected_weights = weights or cast(
+        tuple[float, float, float],
+        getattr(models, "weights", (0.4, 0.3, 0.3)),
+    )
+    w_if, w_ae, w_sgd = _normalize_weights(selected_weights)
     x = _to_vector(features)
 
     raw_if = float(models.if_model.decision_function(x)[0])
@@ -84,13 +114,24 @@ def score_event_features(
 
     sgd_score = float(models.sgd_model.predict_proba(x)[0][1])
 
-    ensemble_score = float((w_if * if_score) + (w_ae * ae_score) + (w_sgd * sgd_score))
-    return {
-        "if_score": if_score,
-        "ae_score": ae_score,
-        "sgd_score": sgd_score,
+    raw_scores = {"if": if_score, "ae": ae_score, "sgd": sgd_score}
+    calibrators = getattr(models, "calibrators", None) or {}
+    calibrated_scores = {
+        name: float(calibrators[name].transform(np.array([score], dtype=float))[0]) if name in calibrators else score
+        for name, score in raw_scores.items()
+    }
+    ensemble_score = float(
+        (w_if * calibrated_scores["if"]) + (w_ae * calibrated_scores["ae"]) + (w_sgd * calibrated_scores["sgd"])
+    )
+    result = {
+        "if_score": calibrated_scores["if"],
+        "ae_score": calibrated_scores["ae"],
+        "sgd_score": calibrated_scores["sgd"],
         "ensemble_score": ensemble_score,
     }
+    if calibrators:
+        result.update({f"raw_{name}_score": score for name, score in raw_scores.items()})
+    return result
 
 
 def route_score_to_topic(

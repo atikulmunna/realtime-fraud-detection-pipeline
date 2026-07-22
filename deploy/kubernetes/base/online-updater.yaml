@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: online-updater
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: online-updater}
+  template:
+    metadata:
+      labels: {app: online-updater}
+    spec:
+      serviceAccountName: fraud-app
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: updater
+          image: ghcr.io/example/realtime-fraud-app:latest
+          args: ["python", "-m", "src.online.feedback_consumer_service", "--model-path", "/models/sgd_classifier_v1.joblib", "--bootstrap-servers", "$(KAFKA_BOOTSTRAP_SERVERS)", "--mlflow-tracking-uri", "$(MLFLOW_TRACKING_URI)", "--metrics-port", "8002"]
+          ports: [{name: metrics, containerPort: 8002}]
+          envFrom:
+            - configMapRef: {name: fraud-config}
+            - secretRef: {name: fraud-secrets}
+          readinessProbe:
+            httpGet: {path: /health, port: metrics}
+          livenessProbe:
+            httpGet: {path: /health, port: metrics}
+            initialDelaySeconds: 15
+          volumeMounts: [{name: models, mountPath: /models}]
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: "2", memory: 2Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+      volumes:
+        - name: models
+          persistentVolumeClaim: {claimName: fraud-model-cache}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fraud-model-cache
+spec:
+  # Bind this claim to an external RWX/object-backed CSI class in production.
+  accessModes: ["ReadWriteMany"]
+  resources:
+    requests: {storage: 5Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: online-updater
+spec:
+  selector: {app: online-updater}
+  ports: [{name: metrics, port: 8002, targetPort: metrics}]

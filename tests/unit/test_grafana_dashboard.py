@@ -15,6 +15,11 @@ def test_grafana_dashboard_contains_stream_metrics_panels():
     assert "Promotion Pass Total" in titles
     assert "Promotion Fail Total" in titles
     assert "Promotion Rollback Total" in titles
+    assert "Kafka Consumer Lag" in titles
+    assert "Feedback Outbox Backlog" in titles
+    assert "Online Model Age" in titles
+    assert "Stream p95 Latency (5m)" in titles
+    assert "Stream DLQ Ratio (5m)" in titles
 
     queries = [target["expr"] for panel in panels for target in panel.get("targets", [])]
     assert any("stream_events_in_total" in q for q in queries)
@@ -23,3 +28,6 @@ def test_grafana_dashboard_contains_stream_metrics_panels():
     assert any("promotion_pass_total" in q for q in queries)
     assert any("promotion_fail_total" in q for q in queries)
     assert any("promotion_rollback_total" in q for q in queries)
+    assert any("online_consumer_lag" in q for q in queries)
+    assert any("outbox_backlog" in q for q in queries)
+    assert any("stream_event_processing_latency_ms_bucket" in q for q in queries)

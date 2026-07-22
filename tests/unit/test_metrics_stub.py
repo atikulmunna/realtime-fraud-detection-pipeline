@@ -18,3 +18,13 @@ def test_metrics_registry_renders_prometheus_text():
     assert "# TYPE feedback_requests_total counter" in text
     assert "feedback_requests_total 2.0" in text
     assert "# TYPE online_updater_buffer_size gauge" in text
+
+
+def test_metrics_registry_exposes_real_prometheus_histogram():
+    m = MetricsRegistry()
+    m.observe("request_latency_ms", 12.0, buckets=(5.0, 25.0))
+
+    rendered = m.render_prometheus()
+    assert "# TYPE request_latency_ms histogram" in rendered
+    assert 'request_latency_ms_bucket{le="25.0"} 1.0' in rendered
+    assert "request_latency_ms_count 1.0" in rendered

@@ -1,0 +1,42 @@
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: fraud-streaming
+spec:
+  image: ghcr.io/example/realtime-fraud-flink:latest
+  flinkVersion: v1_19
+  serviceAccount: fraud-flink
+  flinkConfiguration:
+    taskmanager.numberOfTaskSlots: "2"
+    state.checkpoints.dir: s3://replace-me/flink/checkpoints
+    state.savepoints.dir: s3://replace-me/flink/savepoints
+    execution.checkpointing.interval: 30s
+    execution.checkpointing.mode: EXACTLY_ONCE
+  podTemplate:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: flink-main-container
+          envFrom:
+            - configMapRef: {name: fraud-config}
+            - secretRef: {name: fraud-secrets}
+          volumeMounts: [{name: models, mountPath: /models, readOnly: true}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+      volumes:
+        - name: models
+          persistentVolumeClaim: {claimName: fraud-model-cache}
+  jobManager:
+    resource: {cpu: 1, memory: 1536m}
+  taskManager:
+    resource: {cpu: 2, memory: 4096m}
+    replicas: 2
+  job:
+    jarURI: local:///opt/flink/opt/flink-python-1.19.1.jar
+    args: ["-py", "/opt/fraud/src/streaming/flink_job.py"]
+    parallelism: 4
+    upgradeMode: savepoint
+    state: running

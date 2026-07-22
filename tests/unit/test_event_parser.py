@@ -1,3 +1,9 @@
+import json
+import math
+from pathlib import Path
+
+from jsonschema import Draft202012Validator, FormatChecker
+
 from src.streaming.event_parser import parse_and_validate_event, route_parse_result
 
 
@@ -87,3 +93,49 @@ def test_parse_and_validate_event_dlq_raw_event_bytes_are_serializable():
     result = parse_and_validate_event(bad_bytes)
     assert not result.ok
     assert isinstance(result.dlq["raw_event"], str)
+
+
+def test_parse_and_validate_event_normalizes_legacy_transaction_types():
+    for legacy, canonical in (("CASH-OUT", "CASH_OUT"), ("CASH-IN", "CASH_IN")):
+        payload = _valid_event()
+        payload["type"] = legacy
+
+        result = parse_and_validate_event(payload)
+
+        assert result.ok
+        assert result.event["type"] == canonical
+
+
+def test_parse_and_validate_event_accepts_canonical_paysim_transaction_types():
+    for transaction_type in ("CASH_OUT", "CASH_IN"):
+        payload = _valid_event()
+        payload["type"] = transaction_type
+        assert parse_and_validate_event(payload).ok
+
+
+def test_parse_and_validate_event_rejects_timestamp_without_timezone():
+    payload = _valid_event()
+    payload["timestamp"] = "2026-02-16T12:00:00"
+
+    result = parse_and_validate_event(payload)
+
+    assert not result.ok
+    assert result.dlq["error_code"] == "INVALID_FORMAT"
+    assert result.dlq["stage"] == "parse"
+
+
+def test_parse_and_validate_event_rejects_non_finite_numbers():
+    payload = _valid_event()
+    payload["amount"] = math.nan
+
+    result = parse_and_validate_event(payload)
+
+    assert not result.ok
+    assert result.dlq["error_code"] == "NON_FINITE_NUMBER"
+
+
+def test_parse_dlq_record_conforms_to_schema():
+    result = parse_and_validate_event("{bad json}")
+    schema = json.loads(Path("schemas/dlq_v1.json").read_text(encoding="utf-8"))
+
+    Draft202012Validator(schema, format_checker=FormatChecker()).validate(result.dlq)

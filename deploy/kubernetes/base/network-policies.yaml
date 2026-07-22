@@ -1,0 +1,43 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: application-egress
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app, operator: In, values: [feedback-api, outbox-relay, online-updater]}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - {protocol: TCP, port: 53}
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 5432}
+        - {protocol: TCP, port: 9092}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: metrics-and-api-ingress
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app, operator: In, values: [feedback-api, outbox-relay, online-updater]}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - {protocol: TCP, port: 8000}
+        - {protocol: TCP, port: 8002}
+        - {protocol: TCP, port: 8003}

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import requests
-
 
 FetchFn = Callable[[str, float], tuple[int, str]]
 

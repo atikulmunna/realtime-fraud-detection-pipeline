@@ -63,6 +63,29 @@ def test_load_ensemble_models_reads_artifacts(tmp_path: Path):
     assert isinstance(models.ae_scaler, DummyScaler)
     assert isinstance(models.sgd_model, DummySGDModel)
     assert models.ae_threshold_p99 == 2.0
+    assert models.model_source == "trained_artifacts"
+    assert models.model_version == "v1"
+    assert models.feature_contract_version == "1"
+
+
+def test_load_ensemble_models_rejects_feature_contract_mismatch(tmp_path: Path):
+    if_path = tmp_path / "if.joblib"
+    ae_path = tmp_path / "ae.joblib"
+    sgd_path = tmp_path / "sgd.joblib"
+    joblib.dump(DummyIFModel(), if_path)
+    joblib.dump(
+        {
+            "model": DummyAEModel(),
+            "scaler": DummyScaler(),
+            "threshold_p99": 2.0,
+            "features_order": FEATURES_V1,
+        },
+        ae_path,
+    )
+    joblib.dump({"model": DummySGDModel(), "features_order": list(reversed(FEATURES_V1))}, sgd_path)
+
+    with pytest.raises(ValueError, match="feature order"):
+        load_ensemble_models(if_model_path=if_path, ae_model_path=ae_path, sgd_model_path=sgd_path)
 
 
 def test_score_event_features_expected_weighted_score():

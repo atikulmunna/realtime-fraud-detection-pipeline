@@ -59,3 +59,21 @@ def test_add_training_features_handles_underscore_cashout():
     )
     out = add_training_features(df)
     assert int(out.iloc[0]["is_cashout"]) == 1
+
+
+def test_add_training_features_preserves_source_chronology():
+    df = pd.DataFrame(
+        {
+            "step": [1, 2, 3],
+            "type": ["PAYMENT", "TRANSFER", "CASH_OUT"],
+            "amount": [5.0, 20.0, 10.0],
+            "nameOrig": ["Z-user", "A-user", "M-user"],
+            "oldbalanceOrg": [50.0, 50.0, 20.0],
+            "newbalanceOrig": [45.0, 30.0, 10.0],
+        }
+    )
+
+    out = add_training_features(df)
+
+    assert list(out["step"]) == [1, 2, 3]
+    assert "_source_order" not in out.columns

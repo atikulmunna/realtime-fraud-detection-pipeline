@@ -2,11 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Dead Letter Event v1",
   "type": "object",
-  "required": ["error", "raw_event", "received_at"],
+  "required": ["error", "error_code", "stage", "raw_event", "received_at"],
   "properties": {
-    "error": {"type": "string"},
+    "error": {"type": "string", "minLength": 1},
+    "error_code": {"type": "string", "minLength": 1},
+    "stage": {"type": "string", "enum": ["parse", "feature", "scoring", "late_event"]},
     "raw_event": {},
-    "received_at": {"type": "string"}
+    "received_at": {"type": "string", "format": "date-time"},
+    "event_id": {"type": "string", "minLength": 1}
   },
   "additionalProperties": true
 }

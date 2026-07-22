@@ -1,5 +1,7 @@
 """Shared feature contract for training and serving."""
 
+FEATURE_CONTRACT_VERSION = "1"
+
 FEATURES_V1 = [
     "amount",
     "amount_ratio",

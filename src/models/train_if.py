@@ -12,6 +12,7 @@ import pandas as pd
 from sklearn.ensemble import IsolationForest
 
 from src.common.feature_contract import FEATURES_V1
+from src.data.splitting import chronological_split
 from src.models.mlflow_logging import log_training_run
 
 
@@ -35,11 +36,13 @@ def train_isolation_forest(
 ) -> dict[str, Any]:
     df = pd.read_parquet(input_parquet)
     _validate_features(df)
+    splits = chronological_split(df)
+    train_source = splits.train
 
-    if "isFraud" in df.columns:
-        normal_df = df[df["isFraud"] == 0]
+    if "isFraud" in train_source.columns:
+        normal_df = train_source[train_source["isFraud"] == 0]
     else:
-        normal_df = df
+        normal_df = train_source
 
     n_available = int(normal_df.shape[0])
     n_train = min(sample_size, n_available)
@@ -69,6 +72,9 @@ def train_isolation_forest(
         "input_parquet": str(input_parquet),
         "output_model": str(out_model),
         "rows_total": int(df.shape[0]),
+        "rows_dataset_train": int(len(splits.train)),
+        "rows_dataset_validation": int(len(splits.validation)),
+        "rows_dataset_test": int(len(splits.test)),
         "rows_normal": n_available,
         "rows_train": n_train,
         "sample_size_requested": sample_size,

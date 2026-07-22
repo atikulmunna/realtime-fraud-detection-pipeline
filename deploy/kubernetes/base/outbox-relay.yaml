@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: outbox-relay
+spec:
+  # Single active relay avoids concurrent claims; scale only after adding DB leasing/SKIP LOCKED.
+  replicas: 1
+  selector:
+    matchLabels: {app: outbox-relay}
+  template:
+    metadata:
+      labels: {app: outbox-relay}
+    spec:
+      serviceAccountName: fraud-app
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: relay
+          image: ghcr.io/example/realtime-fraud-app:latest
+          args: ["python", "-m", "src.api.outbox_relay", "--metrics-port", "8003"]
+          ports: [{name: metrics, containerPort: 8003}]
+          envFrom:
+            - configMapRef: {name: fraud-config}
+            - secretRef: {name: fraud-secrets}
+          readinessProbe:
+            httpGet: {path: /health, port: metrics}
+          livenessProbe:
+            httpGet: {path: /health, port: metrics}
+            initialDelaySeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: outbox-relay
+spec:
+  selector: {app: outbox-relay}
+  ports: [{name: metrics, port: 8003, targetPort: metrics}]

@@ -1,0 +1,6 @@
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: fraud-streaming
+spec:
+  image: realtime-fraud/flink:local

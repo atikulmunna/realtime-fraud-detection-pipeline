@@ -88,4 +88,3 @@ def test_evaluate_model_on_holdout_requires_target_column(tmp_path: Path):
     bad.to_parquet(holdout_path, index=False)
     with pytest.raises(ValueError, match="must include `isFraud`"):
         evaluate_model_on_holdout(model=payload["model"], holdout_parquet=holdout_path)
-

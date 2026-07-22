@@ -13,11 +13,11 @@
   ],
   "properties": {
     "event_id": {"type": "string", "minLength": 1},
-    "timestamp": {"type": "string", "minLength": 1},
+    "timestamp": {"type": "string", "minLength": 1, "format": "date-time"},
     "user_id": {"type": "string", "minLength": 1},
     "type": {
       "type": "string",
-      "enum": ["TRANSFER", "CASH-OUT", "PAYMENT", "CASH-IN", "DEBIT"]
+      "enum": ["TRANSFER", "CASH_OUT", "CASH-OUT", "PAYMENT", "CASH_IN", "CASH-IN", "DEBIT"]
     },
     "amount": {"type": "number", "minimum": 0},
     "old_balance_orig": {"type": "number", "minimum": 0},

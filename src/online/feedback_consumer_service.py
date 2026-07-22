@@ -4,19 +4,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import time
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Thread
 from typing import Any, Protocol
 
 import joblib
 from kafka import KafkaConsumer
 
+from src.api.feedback_publisher import build_reliable_feedback_publisher
+from src.common.metrics_http import start_metrics_http_server
 from src.common.metrics_stub import MetricsRegistry
+from src.common.structured_logging import configure_json_logging, log_event
+from src.models.registry import MlflowOnlineCandidateRegistry
 from src.online.model_promotion import PromotionThresholds, evaluate_and_maybe_rollback
 from src.online.online_sgd_updater import OnlineSGDUpdater
+
+logger = logging.getLogger(__name__)
 
 
 class ConsumerMessage(Protocol):
@@ -24,48 +28,30 @@ class ConsumerMessage(Protocol):
 
 
 class FeedbackConsumer(Protocol):
-    def poll(self, timeout_ms: int = 0, max_records: int | None = None) -> dict[Any, list[ConsumerMessage]]:
-        ...
+    def poll(self, timeout_ms: int = 0, max_records: int | None = None) -> dict[Any, list[ConsumerMessage]]: ...
 
-    def close(self) -> None:
-        ...
+    def close(self) -> None: ...
+
+    def commit(self) -> None: ...
 
 
-def start_metrics_http_server(
-    *,
-    metrics: MetricsRegistry,
-    host: str = "0.0.0.0",
-    port: int = 8002,
-) -> ThreadingHTTPServer:
-    class _Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
-            if self.path == "/metrics":
-                body = metrics.render_prometheus().encode("utf-8")
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "text/plain; version=0.0.4")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-                return
-            if self.path == "/health":
-                body = b'{"status":"ok"}'
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-                return
+class CandidateRegistry(Protocol):
+    def register_candidate(self, candidate_path: str | Path, metadata: dict[str, Any]) -> str: ...
 
-            self.send_response(HTTPStatus.NOT_FOUND)
-            self.end_headers()
+    def promote_candidate(self, version: str) -> None: ...
 
-        def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
-            return
 
-    server = ThreadingHTTPServer((host, int(port)), _Handler)
-    thread = Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    return server
+def _consumer_lag(consumer: FeedbackConsumer) -> int | None:
+    assignment = getattr(consumer, "assignment", None)
+    end_offsets = getattr(consumer, "end_offsets", None)
+    position = getattr(consumer, "position", None)
+    if not callable(assignment) or not callable(end_offsets) or not callable(position):
+        return None
+    partitions = assignment()
+    if not partitions:
+        return 0
+    ends = end_offsets(partitions)
+    return sum(max(0, int(ends[partition]) - int(position(partition))) for partition in partitions)
 
 
 def build_kafka_feedback_consumer(
@@ -79,7 +65,7 @@ def build_kafka_feedback_consumer(
         topic,
         bootstrap_servers=[bootstrap_servers],
         group_id=group_id,
-        enable_auto_commit=True,
+        enable_auto_commit=False,
         auto_offset_reset=auto_offset_reset,
         value_deserializer=lambda b: json.loads(b.decode("utf-8")),
     )
@@ -99,6 +85,7 @@ def run_feedback_consumer_loop(
     force_flush_on_exit: bool = True,
     promotion_holdout_parquet: str | Path | None = None,
     promotion_thresholds: PromotionThresholds | None = None,
+    candidate_registry: CandidateRegistry | None = None,
 ) -> dict[str, Any]:
     if poll_timeout_ms <= 0:
         raise ValueError("poll_timeout_ms must be > 0")
@@ -123,13 +110,89 @@ def run_feedback_consumer_loop(
     promotion_passed = 0
     promotion_failed = 0
     rollbacks = 0
+    commits = 0
+    has_uncommitted_records = False
+
+    def commit_processed() -> None:
+        nonlocal commits
+        commit = getattr(consumer, "commit", None)
+        if callable(commit):
+            commit()
+        commits += 1
+        m.inc("online_consumer_commits_total")
+        log_event(logger, "feedback_offsets_committed", commit_count=commits)
+
+    def flush_and_evaluate(*, force: bool) -> bool:
+        nonlocal updates, promotion_passed, promotion_failed, rollbacks
+        backup_payload = joblib.load(updater.model_path)
+        result = updater.flush(force=force, stage_candidate=True)
+        if not result.updated:
+            return False
+
+        updates += 1
+        if result.signal is None:
+            raise RuntimeError("Updated candidate did not include a model-update signal.")
+        candidate_version: str | None = None
+        if candidate_registry is not None:
+            candidate_version = candidate_registry.register_candidate(
+                updater.candidate_path,
+                {
+                    "online_update_count": updater.online_update_count,
+                    "batch_size": result.batch_size,
+                    "features_order": updater.features_order,
+                },
+            )
+
+        passed = True
+        if promotion_holdout_parquet is not None:
+            decision = evaluate_and_maybe_rollback(
+                updater=updater,
+                backup_payload=backup_payload,
+                holdout_parquet=promotion_holdout_parquet,
+                thresholds=promotion_thresholds or PromotionThresholds(),
+            )
+            if decision.passed:
+                promotion_passed += 1
+                m.inc("promotion_pass_total")
+                log_event(
+                    logger,
+                    "online_candidate_approved",
+                    correlation_id=str(updater.online_update_count),
+                    metrics=decision.metrics,
+                )
+            else:
+                passed = False
+                promotion_failed += 1
+                m.inc("promotion_fail_total")
+                if decision.rolled_back:
+                    rollbacks += 1
+                    m.inc("promotion_rollback_total")
+                log_event(
+                    logger,
+                    "online_candidate_rejected",
+                    correlation_id=str(updater.online_update_count),
+                    level=logging.WARNING,
+                    reasons=decision.reasons,
+                )
+        if passed:
+            if candidate_registry is not None and candidate_version is not None:
+                candidate_registry.promote_candidate(candidate_version)
+            updater.promote_candidate()
+        return True
 
     try:
         while True:
-            polled = consumer.poll(timeout_ms=poll_timeout_ms, max_records=max_records_per_poll)
+            remaining = None if max_messages is None else max_messages - messages_seen
+            poll_limit = max_records_per_poll if remaining is None else min(max_records_per_poll, max(remaining, 1))
+            polled = consumer.poll(timeout_ms=poll_timeout_ms, max_records=poll_limit)
+            lag = _consumer_lag(consumer)
+            if lag is not None:
+                m.set_gauge("online_consumer_lag", lag)
+            m.set_gauge("online_model_age_seconds", updater.model_age_seconds)
             records = [rec for recs in polled.values() for rec in recs]
 
             if records:
+                has_uncommitted_records = True
                 idle_polls = 0
                 for rec in records:
                     messages_seen += 1
@@ -139,26 +202,7 @@ def run_feedback_consumer_loop(
                     if isinstance(payload, dict) and updater.add_feedback(payload):
                         accepted += 1
                         if updater.ready():
-                            backup_payload = joblib.load(updater.model_path)
-                            res = updater.flush(force=False)
-                            if res.updated:
-                                updates += 1
-                                if promotion_holdout_parquet is not None:
-                                    decision = evaluate_and_maybe_rollback(
-                                        updater=updater,
-                                        backup_payload=backup_payload,
-                                        holdout_parquet=promotion_holdout_parquet,
-                                        thresholds=promotion_thresholds or PromotionThresholds(),
-                                    )
-                                    if decision.passed:
-                                        promotion_passed += 1
-                                        m.inc("promotion_pass_total")
-                                    else:
-                                        promotion_failed += 1
-                                        m.inc("promotion_fail_total")
-                                        if decision.rolled_back:
-                                            rollbacks += 1
-                                            m.inc("promotion_rollback_total")
+                            flush_and_evaluate(force=False)
                     else:
                         skipped += 1
 
@@ -171,10 +215,12 @@ def run_feedback_consumer_loop(
 
             now = time.monotonic()
             if now - last_flush_at >= flush_interval_s:
-                res = updater.flush(force=False)
-                if res.updated:
-                    updates += 1
+                flush_and_evaluate(force=True)
                 last_flush_at = now
+
+            if has_uncommitted_records and updater.buffer_size == 0:
+                commit_processed()
+                has_uncommitted_records = False
 
             if max_messages is not None and messages_seen >= max_messages:
                 break
@@ -182,26 +228,10 @@ def run_feedback_consumer_loop(
                 break
 
         if force_flush_on_exit:
-            backup_payload = joblib.load(updater.model_path)
-            final = updater.flush(force=True)
-            if final.updated:
-                updates += 1
-                if promotion_holdout_parquet is not None:
-                    decision = evaluate_and_maybe_rollback(
-                        updater=updater,
-                        backup_payload=backup_payload,
-                        holdout_parquet=promotion_holdout_parquet,
-                        thresholds=promotion_thresholds or PromotionThresholds(),
-                    )
-                    if decision.passed:
-                        promotion_passed += 1
-                        m.inc("promotion_pass_total")
-                    else:
-                        promotion_failed += 1
-                        m.inc("promotion_fail_total")
-                        if decision.rolled_back:
-                            rollbacks += 1
-                            m.inc("promotion_rollback_total")
+            flush_and_evaluate(force=True)
+            if has_uncommitted_records and updater.buffer_size == 0:
+                commit_processed()
+                has_uncommitted_records = False
     finally:
         consumer.close()
 
@@ -213,11 +243,13 @@ def run_feedback_consumer_loop(
         "promotion_passed": int(promotion_passed),
         "promotion_failed": int(promotion_failed),
         "rollbacks": int(rollbacks),
+        "commits": int(commits),
         "runtime_s": float(time.monotonic() - started),
     }
 
 
 def main() -> None:
+    configure_json_logging()
     parser = argparse.ArgumentParser(description="Run continuous feedback consumer for online updates.")
     parser.add_argument("--model-path", default="models/sgd_classifier_v1.joblib")
     parser.add_argument("--batch-size", type=int, default=500)
@@ -232,6 +264,9 @@ def main() -> None:
     parser.add_argument("--max-idle-polls", type=int, default=None)
     parser.add_argument("--no-force-flush-on-exit", action="store_true")
     parser.add_argument("--promotion-holdout", default=None, help="Parquet path with FEATURES_V1 + isFraud.")
+    parser.add_argument("--mlflow-tracking-uri", default=None)
+    parser.add_argument("--registered-model-name", default="fraud-online-sgd")
+    parser.add_argument("--model-update-topic", default="model-updates")
     parser.add_argument("--min-precision", type=float, default=0.0)
     parser.add_argument("--min-recall", type=float, default=0.0)
     parser.add_argument("--min-pr-auc", type=float, default=0.0)
@@ -240,7 +275,17 @@ def main() -> None:
     args = parser.parse_args()
 
     metrics = MetricsRegistry()
-    updater = OnlineSGDUpdater(model_path=Path(args.model_path), batch_size=args.batch_size, metrics=metrics)
+    update_publisher = build_reliable_feedback_publisher(
+        bootstrap_servers=args.bootstrap_servers,
+        topic=args.model_update_topic,
+        key_field="model_type",
+    )
+    updater = OnlineSGDUpdater(
+        model_path=Path(args.model_path),
+        batch_size=args.batch_size,
+        metrics=metrics,
+        publisher=update_publisher,
+    )
     consumer = build_kafka_feedback_consumer(
         bootstrap_servers=args.bootstrap_servers,
         topic=args.topic,
@@ -252,24 +297,35 @@ def main() -> None:
         host=args.metrics_host,
         port=args.metrics_port,
     )
+    candidate_registry = (
+        MlflowOnlineCandidateRegistry(
+            tracking_uri=args.mlflow_tracking_uri,
+            registered_model_name=args.registered_model_name,
+        )
+        if args.mlflow_tracking_uri
+        else None
+    )
     try:
-        summary = run_feedback_consumer_loop(
-            updater=updater,
-            consumer=consumer,
-            metrics=metrics,
-            poll_timeout_ms=args.poll_timeout_ms,
-            max_records_per_poll=args.max_records_per_poll,
-            flush_interval_s=args.flush_interval_s,
-            max_messages=args.max_messages,
-            max_idle_polls=args.max_idle_polls,
-            force_flush_on_exit=not args.no_force_flush_on_exit,
-            promotion_holdout_parquet=args.promotion_holdout,
-            promotion_thresholds=PromotionThresholds(
-                min_precision=float(args.min_precision),
-                min_recall=float(args.min_recall),
-                min_pr_auc=float(args.min_pr_auc),
+        summary = (
+            run_feedback_consumer_loop(
+                updater=updater,
+                consumer=consumer,
+                metrics=metrics,
+                poll_timeout_ms=args.poll_timeout_ms,
+                max_records_per_poll=args.max_records_per_poll,
+                flush_interval_s=args.flush_interval_s,
+                max_messages=args.max_messages,
+                max_idle_polls=args.max_idle_polls,
+                force_flush_on_exit=not args.no_force_flush_on_exit,
+                promotion_holdout_parquet=args.promotion_holdout,
+                promotion_thresholds=PromotionThresholds(
+                    min_precision=float(args.min_precision),
+                    min_recall=float(args.min_recall),
+                    min_pr_auc=float(args.min_pr_auc),
+                ),
+                candidate_registry=candidate_registry,
             ),
-        ),
+        )
         print(json.dumps(summary, indent=2))
     finally:
         metrics_server.shutdown()

@@ -9,11 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.common.feature_contract import FEATURE_CONTRACT_VERSION, FEATURES_V1
 from src.common.metrics_stub import MetricsRegistry
-from src.common.feature_contract import FEATURES_V1
+from src.common.structured_logging import configure_json_logging
 from src.online.online_sgd_updater import OnlineSGDUpdater, process_feedback_messages
 from src.streaming.ensemble_scoring import EnsembleModels, load_ensemble_models
 from src.streaming.pipeline_skeleton import process_stream_payload
@@ -106,6 +107,9 @@ def _build_demo_models() -> EnsembleModels:
         ae_scaler=_DemoScaler(),
         ae_threshold_p99=0.01,
         sgd_model=_DemoSGDModel(),
+        model_source="demo",
+        model_version="demo-v1",
+        feature_contract_version=FEATURE_CONTRACT_VERSION,
     )
 
 
@@ -129,12 +133,26 @@ def create_online_service_app(
     updater: OnlineSGDUpdater,
     metrics: MetricsRegistry,
     stream_models: EnsembleModels,
+    allow_demo_mode: bool = False,
 ) -> FastAPI:
     app = FastAPI(title="Realtime Fraud Online Service", version="0.1.0")
 
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/ready")
+    def ready() -> JSONResponse:
+        demo_allowed = bool(allow_demo_mode and stream_models.model_source == "demo")
+        is_ready = stream_models.model_source == "trained_artifacts" or demo_allowed
+        payload = {
+            "status": "ready" if is_ready else "not_ready",
+            "model_source": stream_models.model_source,
+            "model_version": stream_models.model_version,
+            "feature_contract_version": stream_models.feature_contract_version,
+            "demo_mode_allowed": bool(allow_demo_mode),
+        }
+        return JSONResponse(status_code=200 if is_ready else 503, content=payload)
 
     @app.get("/metrics", response_class=PlainTextResponse)
     def metrics_endpoint() -> str:
@@ -152,12 +170,8 @@ def create_online_service_app(
 
     @app.post("/feedback/sample")
     def ingest_feedback_sample() -> dict[str, Any]:
-        accepted_a = updater.add_feedback(
-            {"label": "true_positive", "features": {k: 1.0 for k in FEATURES_V1}}
-        )
-        accepted_b = updater.add_feedback(
-            {"label": "false_positive", "features": {k: 0.2 for k in FEATURES_V1}}
-        )
+        accepted_a = updater.add_feedback({"label": "true_positive", "features": {k: 1.0 for k in FEATURES_V1}})
+        accepted_b = updater.add_feedback({"label": "false_positive", "features": {k: 0.2 for k in FEATURES_V1}})
         update = updater.flush(force=True)
         return {
             "accepted": bool(accepted_a and accepted_b),
@@ -241,19 +255,30 @@ def app_factory() -> FastAPI:
     if_path = os.getenv("IF_MODEL_PATH", "models/isolation_forest_v1.joblib")
     ae_path = os.getenv("AE_MODEL_PATH", "models/autoencoder_v1.joblib")
     sgd_path = os.getenv("SGD_MODEL_PATH", "models/sgd_classifier_v1.joblib")
+    allow_demo_mode = os.getenv("ALLOW_DEMO_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
     try:
         stream_models = load_ensemble_models(
             if_model_path=if_path,
             ae_model_path=ae_path,
             sgd_model_path=sgd_path,
         )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        if not allow_demo_mode:
+            raise RuntimeError(
+                "Failed to load the trained ensemble. Set ALLOW_DEMO_MODE=true only for explicit development use."
+            ) from exc
         stream_models = _build_demo_models()
 
-    return create_online_service_app(updater=updater, metrics=metrics, stream_models=stream_models)
+    return create_online_service_app(
+        updater=updater,
+        metrics=metrics,
+        stream_models=stream_models,
+        allow_demo_mode=allow_demo_mode,
+    )
 
 
 def main() -> None:
+    configure_json_logging()
     parser = argparse.ArgumentParser(description="Run a single local online-updater pass.")
     parser.add_argument("--model-path", default="models/sgd_classifier_v1.joblib")
     parser.add_argument("--batch-size", type=int, default=500)

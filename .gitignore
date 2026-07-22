@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-tmp/
 
 # Virtual env
 .venv/
@@ -31,5 +32,18 @@ mlflow.db
 # IDE
 .vscode/
 .idea/
+
+# Runtime output / OS metadata
+logs/
+infra/secrets/*.txt
+desktop.ini
+
+# Quality reports
+.coverage
+coverage.xml
+.mypy_cache/
+.ruff_cache/
+.uv-cache/
+.pre-commit-cache/
 
 wiki.md

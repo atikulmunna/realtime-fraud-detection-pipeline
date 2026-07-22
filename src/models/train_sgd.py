@@ -13,6 +13,7 @@ from sklearn.linear_model import SGDClassifier
 from sklearn.metrics import average_precision_score, precision_score, recall_score
 
 from src.common.feature_contract import FEATURES_V1
+from src.data.splitting import chronological_split
 from src.models.mlflow_logging import log_training_run
 
 
@@ -38,17 +39,13 @@ def train_sgd_classifier(
     df = pd.read_parquet(input_parquet)
     _validate_columns(df)
 
-    X = df[FEATURES_V1]
-    y = df["isFraud"].astype(int)
-
-    split_idx = int(0.8 * len(df))
-    if split_idx <= 0 or split_idx >= len(df):
-        raise ValueError("Dataset is too small for train/validation split.")
-
-    X_train = X.iloc[:split_idx]
-    y_train = y.iloc[:split_idx]
-    X_val = X.iloc[split_idx:]
-    y_val = y.iloc[split_idx:]
+    splits = chronological_split(df)
+    X_train = splits.train[FEATURES_V1]
+    y_train = splits.train["isFraud"].astype(int)
+    X_val = splits.validation[FEATURES_V1]
+    y_val = splits.validation["isFraud"].astype(int)
+    X_test = splits.test[FEATURES_V1]
+    y_test = splits.test["isFraud"].astype(int)
 
     model = SGDClassifier(
         loss="log_loss",
@@ -61,6 +58,8 @@ def train_sgd_classifier(
 
     val_proba = model.predict_proba(X_val)[:, 1]
     val_pred = (val_proba >= 0.5).astype(int)
+    test_proba = model.predict_proba(X_test)[:, 1]
+    test_pred = (test_proba >= 0.5).astype(int)
 
     metrics = {
         "model": "SGDClassifier",
@@ -69,15 +68,20 @@ def train_sgd_classifier(
         "rows_total": int(len(df)),
         "rows_train": int(len(X_train)),
         "rows_val": int(len(X_val)),
-        "fraud_count_total": int(y.sum()),
+        "rows_test": int(len(X_test)),
+        "fraud_count_total": int(df["isFraud"].astype(int).sum()),
         "fraud_count_train": int(y_train.sum()),
         "fraud_count_val": int(y_val.sum()),
+        "fraud_count_test": int(y_test.sum()),
         "random_state": random_state,
         "max_iter": max_iter,
         "features_order": FEATURES_V1,
         "val_pr_auc": float(average_precision_score(y_val, val_proba)),
         "val_precision_at_0_5": float(precision_score(y_val, val_pred, zero_division=0)),
         "val_recall_at_0_5": float(recall_score(y_val, val_pred, zero_division=0)),
+        "test_pr_auc": float(average_precision_score(y_test, test_proba)),
+        "test_precision_at_0_5": float(precision_score(y_test, test_pred, zero_division=0)),
+        "test_recall_at_0_5": float(recall_score(y_test, test_pred, zero_division=0)),
     }
 
     out_model = Path(output_model)

@@ -18,6 +18,7 @@ def add_timestamp_from_step(df: pd.DataFrame) -> pd.DataFrame:
 
 def add_training_features(df: pd.DataFrame) -> pd.DataFrame:
     out = add_timestamp_from_step(df)
+    out["_source_order"] = range(len(out))
     txn_type = out["type"].astype(str)
 
     out["amount_ratio"] = out["amount"] / (out["oldbalanceOrg"] + 1.0)
@@ -28,8 +29,7 @@ def add_training_features(df: pd.DataFrame) -> pd.DataFrame:
 
     out = out.sort_values(["nameOrig", "timestamp"]).reset_index(drop=True)
     out["txn_velocity_1h"] = out.groupby(["nameOrig", "step"]).cumcount() + 1
-
-    return out
+    return out.sort_values("_source_order").drop(columns=["_source_order"]).reset_index(drop=True)
 
 
 def build_features(input_csv: str | Path, output_parquet: str | Path) -> None:

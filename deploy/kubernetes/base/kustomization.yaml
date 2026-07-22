@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: realtime-fraud
+resources:
+  - namespace.yaml
+  - service-account.yaml
+  - configmap.yaml
+  - feedback-api.yaml
+  - outbox-relay.yaml
+  - online-updater.yaml
+  - flink-deployment.yaml
+  - autoscaling.yaml
+  - disruption-budgets.yaml
+  - network-policies.yaml

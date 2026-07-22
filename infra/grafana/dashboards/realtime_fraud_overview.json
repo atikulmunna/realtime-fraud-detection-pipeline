@@ -415,6 +415,51 @@
       ],
       "title": "Promotion Rollback Total",
       "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 32},
+      "id": 12,
+      "targets": [{"expr": "online_consumer_lag", "refId": "A"}],
+      "title": "Kafka Consumer Lag",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 32},
+      "id": 13,
+      "targets": [{"expr": "outbox_backlog", "refId": "A"}],
+      "title": "Feedback Outbox Backlog",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 32},
+      "id": 14,
+      "targets": [{"expr": "online_model_age_seconds", "refId": "A"}],
+      "title": "Online Model Age",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 32},
+      "id": 15,
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le) (rate(stream_event_processing_latency_ms_bucket[5m])))", "refId": "A"}],
+      "title": "Stream p95 Latency (5m)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+      "id": 16,
+      "targets": [{"expr": "rate(stream_events_dlq_total[5m]) / clamp_min(rate(stream_events_in_total[5m]), 1e-9)", "refId": "A"}],
+      "title": "Stream DLQ Ratio (5m)",
+      "type": "timeseries"
     }
   ],
   "schemaVersion": 39,

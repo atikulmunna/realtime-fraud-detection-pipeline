@@ -1,3 +1,8 @@
+import json
+from pathlib import Path
+
+from jsonschema import Draft202012Validator, FormatChecker
+
 from src.common.metrics_stub import MetricsRegistry
 from src.streaming.pipeline_skeleton import process_stream_batch, process_stream_payload
 
@@ -169,3 +174,30 @@ def test_process_stream_batch_with_metrics_counts_all_routes():
     assert metrics.get_counter("stream_events_anomaly_total") == 2.0
     assert metrics.get_counter("stream_events_dlq_total") == 1.0
     assert metrics.get_counter("stream_process_latency_ms_total") > 0.0
+
+
+def test_scoring_failure_emits_schema_valid_structured_dlq():
+    class _FailingSgdModel:
+        def predict_proba(self, x):
+            raise RuntimeError("model unavailable")
+
+    models = _Models(high=False)
+    models.sgd_model = _FailingSgdModel()
+
+    topic, payload = process_stream_payload(_valid_event("evt-score-error"), models=models)
+
+    assert topic == "dead-letter"
+    assert payload["stage"] == "scoring"
+    assert payload["error_code"] == "SCORING_ERROR"
+    assert payload["event_id"] == "evt-score-error"
+    schema = json.loads(Path("schemas/dlq_v1.json").read_text(encoding="utf-8"))
+    Draft202012Validator(schema, format_checker=FormatChecker()).validate(payload)
+
+
+def test_feature_failure_emits_structured_dlq():
+    topic, payload = process_stream_payload(_valid_event("evt-feature-error"), txn_velocity_1h="bad")
+
+    assert topic == "dead-letter"
+    assert payload["stage"] == "feature"
+    assert payload["error_code"] == "FEATURE_EXTRACTION_ERROR"
+    assert payload["event_id"] == "evt-feature-error"

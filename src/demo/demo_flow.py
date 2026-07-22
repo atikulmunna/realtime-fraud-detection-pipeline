@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -92,14 +91,24 @@ def _demo_payloads() -> list[str | bytes | dict[str, Any]]:
     ]
 
 
-def run_demo_flow(*, model_path: str | Path = "models/sgd_classifier_demo.joblib") -> dict[str, Any]:
-    models = EnsembleModels(
+def build_demo_models() -> EnsembleModels:
+    return EnsembleModels(
         if_model=DemoIFModel(),
         ae_model=DemoAEModel(),
         ae_scaler=DemoScaler(),
         ae_threshold_p99=0.01,
         sgd_model=DemoSGDModel(),
+        model_source="demo",
+        model_version="demo-v1",
     )
+
+
+def run_demo_flow(
+    *,
+    model_path: str | Path = "models/sgd_classifier_demo.joblib",
+    stream_models: EnsembleModels | None = None,
+) -> dict[str, Any]:
+    models = stream_models or build_demo_models()
 
     parsed = process_stream_batch(
         _demo_payloads(),
@@ -146,15 +155,16 @@ def run_demo_flow(*, model_path: str | Path = "models/sgd_classifier_demo.joblib
     update_result = process_feedback_messages(feedback_publisher.events, updater=updater, force_flush=True)
 
     return {
+        "model_source": models.model_source,
+        "model_version": models.model_version,
+        "feature_contract_version": models.feature_contract_version,
         "events_in": len(_demo_payloads()),
         "anomalies": len(anomaly_events),
         "metrics": len(metrics_events),
         "dlq": len(dlq_events),
         "feedback_published": len(feedback_publisher.events),
         "online_updated": update_result.updated,
-        "online_update_count": (
-            int(update_result.signal["online_update_count"]) if update_result.signal else 0
-        ),
+        "online_update_count": (int(update_result.signal["online_update_count"]) if update_result.signal else 0),
         "signals_emitted": len(update_publisher.events),
         "api_feedback_requests_total": api_metrics.get_counter("feedback_requests_total"),
         "online_updates_total": online_metrics.get_counter("online_updates_total"),

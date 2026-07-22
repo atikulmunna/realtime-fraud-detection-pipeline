@@ -2,13 +2,14 @@ from pathlib import Path
 
 import joblib
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 from sklearn.linear_model import SGDClassifier
 
 from src.common.feature_contract import FEATURES_V1
 from src.common.metrics_stub import MetricsRegistry
 from src.online.online_sgd_updater import OnlineSGDUpdater
-from src.online.updater_service import create_online_service_app
+from src.online.updater_service import app_factory, create_online_service_app
 
 
 def _seed_model(path: Path) -> None:
@@ -45,6 +46,9 @@ class _Models:
     ae_scaler = _Scaler()
     ae_threshold_p99 = 1.0
     sgd_model = _SgdModel()
+    model_source = "trained_artifacts"
+    model_version = "test-v1"
+    feature_contract_version = "1"
 
 
 def _feedback_payload() -> dict:
@@ -91,6 +95,11 @@ def test_online_service_emits_feedback_and_stream_metrics(tmp_path: Path):
     assert "stream_events_in_total" in text
     assert "stream_process_latency_ms_total" in text
 
+    ready = client.get("/ready")
+    assert ready.status_code == 200
+    assert ready.json()["model_source"] == "trained_artifacts"
+    assert ready.json()["model_version"] == "test-v1"
+
 
 def test_online_service_stream_sample_endpoint(tmp_path: Path):
     model_path = tmp_path / "sgd.joblib"
@@ -111,3 +120,56 @@ def test_online_service_stream_sample_endpoint(tmp_path: Path):
 
     metrics_resp = client.get("/metrics")
     assert "online_updates_total" in metrics_resp.text
+
+
+def test_app_factory_fails_closed_when_ensemble_cannot_load(monkeypatch):
+    monkeypatch.delenv("ALLOW_DEMO_MODE", raising=False)
+    monkeypatch.setattr("src.online.updater_service.OnlineSGDUpdater", lambda **kwargs: object())
+
+    def fail_load(**kwargs):
+        raise ValueError("corrupt artifact")
+
+    monkeypatch.setattr("src.online.updater_service.load_ensemble_models", fail_load)
+
+    with pytest.raises(RuntimeError, match="Failed to load the trained ensemble"):
+        app_factory()
+
+
+def test_app_factory_allows_explicit_demo_mode(monkeypatch):
+    monkeypatch.setenv("ALLOW_DEMO_MODE", "true")
+    monkeypatch.setattr("src.online.updater_service.OnlineSGDUpdater", lambda **kwargs: object())
+    monkeypatch.setattr(
+        "src.online.updater_service.load_ensemble_models",
+        lambda **kwargs: (_ for _ in ()).throw(FileNotFoundError("missing")),
+    )
+
+    client = TestClient(app_factory())
+    ready = client.get("/ready")
+
+    assert ready.status_code == 200
+    assert ready.json()["model_source"] == "demo"
+    assert ready.json()["demo_mode_allowed"] is True
+
+
+def test_demo_model_is_not_ready_without_explicit_opt_in(tmp_path: Path):
+    model_path = tmp_path / "sgd.joblib"
+    _seed_model(model_path)
+    metrics = MetricsRegistry()
+    updater = OnlineSGDUpdater(model_path=model_path, metrics=metrics)
+
+    class _DemoModels(_Models):
+        model_source = "demo"
+        model_version = "demo-v1"
+
+    client = TestClient(
+        create_online_service_app(
+            updater=updater,
+            metrics=metrics,
+            stream_models=_DemoModels(),
+            allow_demo_mode=False,
+        )
+    )
+
+    ready = client.get("/ready")
+    assert ready.status_code == 503
+    assert ready.json()["status"] == "not_ready"

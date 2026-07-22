@@ -1,0 +1,11 @@
+.git
+.venv
+.uv-cache
+.pytest-tmp
+__pycache__
+*.pyc
+coverage.xml
+data
+logs
+reports
+models

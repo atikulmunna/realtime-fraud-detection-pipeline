@@ -6,7 +6,7 @@ from sklearn.linear_model import SGDClassifier
 
 from src.common.feature_contract import FEATURES_V1
 from src.common.metrics_stub import MetricsRegistry
-from src.online.feedback_consumer_service import run_feedback_consumer_loop
+from src.online.feedback_consumer_service import _consumer_lag, run_feedback_consumer_loop
 from src.online.model_promotion import PromotionThresholds
 from src.online.online_sgd_updater import OnlineSGDUpdater
 
@@ -20,6 +20,7 @@ class _FakeConsumer:
     def __init__(self, polls):
         self._polls = list(polls)
         self.closed = False
+        self.commits = 0
 
     def poll(self, timeout_ms=0, max_records=None):
         if not self._polls:
@@ -28,6 +29,37 @@ class _FakeConsumer:
 
     def close(self):
         self.closed = True
+
+    def commit(self):
+        self.commits += 1
+
+
+class _FakeRegistry:
+    def __init__(self):
+        self.registered = []
+        self.promoted = []
+
+    def register_candidate(self, candidate_path, metadata):
+        assert Path(candidate_path).is_file()
+        self.registered.append((Path(candidate_path), metadata))
+        return "7"
+
+    def promote_candidate(self, version):
+        self.promoted.append(version)
+
+
+def test_consumer_lag_sums_assigned_partition_distance():
+    class _LagConsumer:
+        def assignment(self):
+            return {"p0", "p1"}
+
+        def end_offsets(self, partitions):
+            return {"p0": 12, "p1": 7}
+
+        def position(self, partition):
+            return {"p0": 9, "p1": 2}[partition]
+
+    assert _consumer_lag(_LagConsumer()) == 8
 
 
 def _seed_model(path: Path) -> None:
@@ -71,13 +103,40 @@ def test_feedback_consumer_loop_processes_messages_and_updates(tmp_path: Path):
     assert consumer.closed is True
     assert metrics.get_counter("online_consumer_messages_total") == 2.0
     assert metrics.get_counter("online_updates_total") == 1.0
+    assert consumer.commits == 1
+    assert out["commits"] == 1
+
+
+def test_feedback_consumer_registers_then_promotes_before_commit(tmp_path: Path):
+    model_path = tmp_path / "sgd.joblib"
+    _seed_model(model_path)
+    updater = OnlineSGDUpdater(model_path=model_path, batch_size=1)
+    consumer = _FakeConsumer([{"tp": [_Record(_feedback("true_positive", 0.9))]}])
+    registry = _FakeRegistry()
+
+    out = run_feedback_consumer_loop(
+        updater=updater,
+        consumer=consumer,
+        poll_timeout_ms=1,
+        flush_interval_s=100.0,
+        max_messages=1,
+        force_flush_on_exit=False,
+        candidate_registry=registry,
+    )
+
+    assert out["commits"] == 1
+    assert len(registry.registered) == 1
+    assert registry.promoted == ["7"]
+    assert not updater.candidate_path.exists()
 
 
 def test_feedback_consumer_loop_idle_exit_force_flush(tmp_path: Path):
     model_path = tmp_path / "sgd.joblib"
     _seed_model(model_path)
     updater = OnlineSGDUpdater(model_path=model_path, batch_size=50)
-    consumer = _FakeConsumer([{"tp": [_Record(_feedback("true_positive", 0.8)), _Record(_feedback("false_positive", 0.1))]}, {}, {}])
+    consumer = _FakeConsumer(
+        [{"tp": [_Record(_feedback("true_positive", 0.8)), _Record(_feedback("false_positive", 0.1))]}, {}, {}]
+    )
 
     out = run_feedback_consumer_loop(
         updater=updater,
@@ -90,6 +149,27 @@ def test_feedback_consumer_loop_idle_exit_force_flush(tmp_path: Path):
     assert out["messages_seen"] == 2
     assert out["updates"] == 1
     assert consumer.closed is True
+
+
+def test_feedback_consumer_interval_flushes_partial_batch_and_commits(tmp_path: Path, monkeypatch):
+    model_path = tmp_path / "sgd.joblib"
+    _seed_model(model_path)
+    updater = OnlineSGDUpdater(model_path=model_path, batch_size=50)
+    consumer = _FakeConsumer([{"tp": [_Record(_feedback("true_positive", 0.8))]}])
+    ticks = iter([0.0, 2.0, 3.0])
+    monkeypatch.setattr("src.online.feedback_consumer_service.time.monotonic", lambda: next(ticks))
+
+    out = run_feedback_consumer_loop(
+        updater=updater,
+        consumer=consumer,
+        poll_timeout_ms=1,
+        flush_interval_s=1.0,
+        max_messages=1,
+        force_flush_on_exit=False,
+    )
+
+    assert out["updates"] == 1
+    assert consumer.commits == 1
 
 
 def test_feedback_consumer_loop_promotion_guardrail_failure_rolls_back(tmp_path: Path):

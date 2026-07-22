@@ -1,73 +1,280 @@
+name: realtime-fraud
+
+x-app-image: &app-image
+  build:
+    context: ..
+    dockerfile: infra/app/Dockerfile
+  image: realtime-fraud/app:local
+  restart: unless-stopped
+  networks: [fraud-backplane]
+
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1
+    restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
+    healthcheck:
+      test: ["CMD-SHELL", "cub zk-ready localhost:2181 20"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
+    networks: [fraud-backplane]
 
   kafka:
     image: confluentinc/cp-kafka:7.6.1
+    restart: unless-stopped
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy
     ports:
       - "9092:9092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:29092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks: [fraud-backplane]
 
-  redis:
-    image: redis:7.2
-    ports:
-      - "6379:6379"
+  topic-init:
+    <<: *app-image
+    restart: "no"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: ["python", "-m", "src.streaming.kafka_bootstrap", "--bootstrap-servers", "kafka:29092"]
 
   postgres:
     image: postgres:16
+    restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
       POSTGRES_USER: fraud
-      POSTGRES_PASSWORD: fraud
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fraud-local}
       POSTGRES_DB: fraud
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fraud -d fraud"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [fraud-backplane]
+
+  mlflow:
+    build:
+      context: ..
+      dockerfile: infra/mlflow/Dockerfile
+    image: realtime-fraud/mlflow:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://fraud:${POSTGRES_PASSWORD:-fraud-local}@postgres:5432/fraud
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: mlflow-artifacts:/
+      MLFLOW_ARTIFACTS_DESTINATION: /mlartifacts
+    command: ["mlflow", "server", "--host", "0.0.0.0", "--port", "5000", "--backend-store-uri", "postgresql+psycopg2://fraud:${POSTGRES_PASSWORD:-fraud-local}@postgres:5432/fraud", "--default-artifact-root", "mlflow-artifacts:/", "--artifacts-destination", "/mlartifacts", "--serve-artifacts"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    volumes:
+      - mlflow_artifacts:/mlartifacts
+    networks: [fraud-backplane, fraud-edge]
+
+  feedback-api:
+    <<: *app-image
+    depends_on:
+      postgres:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://fraud:${POSTGRES_PASSWORD:-fraud-local}@postgres:5432/fraud
+      CREATE_DB_SCHEMA: "true"
+      FEEDBACK_API_KEY_FILE: /run/secrets/feedback_api_key
+    secrets: [feedback_api_key]
+    command: ["uvicorn", "src.api.app_entry:app_factory", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [fraud-backplane, fraud-edge]
+
+  outbox-relay:
+    <<: *app-image
+    depends_on:
+      feedback-api:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    ports:
+      - "8003:8003"
+    environment:
+      DATABASE_URL: postgresql+psycopg://fraud:${POSTGRES_PASSWORD:-fraud-local}@postgres:5432/fraud
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      FEEDBACK_TOPIC: feedback
+    command: ["python", "-m", "src.api.outbox_relay", "--metrics-port", "8003"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [fraud-backplane, fraud-edge]
+
+  online-updater:
+    <<: *app-image
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    ports:
+      - "8002:8002"
+    command: ["python", "-m", "src.online.feedback_consumer_service", "--model-path", "/app/models/sgd_classifier_v1.joblib", "--bootstrap-servers", "kafka:29092", "--topic", "feedback", "--group-id", "fraud-online-updater", "--mlflow-tracking-uri", "http://mlflow:5000", "--metrics-port", "8002"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - ../models:/app/models
+    networks: [fraud-backplane, fraud-edge]
 
   prometheus:
     image: prom/prometheus:v2.54.1
+    restart: unless-stopped
     ports:
       - "9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [fraud-backplane, fraud-edge]
 
   grafana:
     image: grafana/grafana:11.1.5
+    restart: unless-stopped
     ports:
       - "3000:3000"
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_healthy
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [fraud-edge]
 
   jobmanager:
-    image: flink:1.19.1-scala_2.12
+    build:
+      context: ..
+      dockerfile: infra/flink/Dockerfile
+    image: realtime-fraud/flink:local
+    restart: unless-stopped
     command: jobmanager
     ports:
       - "8081:8081"
     environment:
-      - |
-        FLINK_PROPERTIES=
+      FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
+        state.checkpoints.dir: file:///opt/flink/checkpoints
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8081/overview || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    volumes:
+      - flink_checkpoints:/opt/flink/checkpoints
+    networks: [fraud-backplane, fraud-edge]
 
   taskmanager:
-    image: flink:1.19.1-scala_2.12
+    image: realtime-fraud/flink:local
+    restart: unless-stopped
     depends_on:
-      - jobmanager
+      jobmanager:
+        condition: service_healthy
     command: taskmanager
     environment:
-      - |
-        FLINK_PROPERTIES=
+      FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
         taskmanager.numberOfTaskSlots: 4
+        state.checkpoints.dir: file:///opt/flink/checkpoints
+    volumes:
+      - flink_checkpoints:/opt/flink/checkpoints
+    networks: [fraud-backplane]
+
+  flink-job:
+    image: realtime-fraud/flink:local
+    profiles: [streaming]
+    restart: "no"
+    depends_on:
+      jobmanager:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    command: ["flink", "run", "--detached", "--python", "/opt/fraud/src/streaming/flink_job.py"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      MODEL_DIR: /opt/fraud/models
+      IF_MODEL_PATH: /opt/fraud/models/isolation_forest_v1.joblib
+      AE_MODEL_PATH: /opt/fraud/models/autoencoder_v1.joblib
+      SGD_MODEL_PATH: /opt/fraud/models/sgd_classifier_v1.joblib
+    volumes:
+      - ../models:/opt/fraud/models:ro
+    networks: [fraud-backplane]
+
+secrets:
+  feedback_api_key:
+    file: ./secrets/feedback_api_key.txt.example
+
+networks:
+  fraud-backplane:
+    internal: true
+  fraud-edge:
+
+volumes:
+  flink_checkpoints:
+  grafana_data:
+  kafka_data:
+  mlflow_artifacts:
+  postgres_data:
+  prometheus_data:
+  zookeeper_data:
+  zookeeper_log:

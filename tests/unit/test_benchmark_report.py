@@ -1,7 +1,9 @@
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import joblib
 import numpy as np
+import pandas as pd
 import pytest
 
 from src.evaluation.benchmark_report import BenchmarkConfig, run_benchmark, save_benchmark_report
@@ -37,6 +39,31 @@ def _write_dummy_ensemble_artifacts(tmp_path: Path) -> tuple[Path, Path, Path]:
     return if_path, ae_path, sgd_path
 
 
+def _write_evaluation_parquet(tmp_path: Path) -> Path:
+    rows = []
+    base = datetime(2024, 1, 1)
+    for step in range(1, 31):
+        for offset in range(30):
+            is_fraud = int(offset % 10 == 0)
+            amount = 900.0 if is_fraud else 20.0
+            rows.append(
+                {
+                    "step": step,
+                    "timestamp": base + timedelta(hours=step),
+                    "nameOrig": f"C-{step}-{offset}",
+                    "type": "TRANSFER" if is_fraud else "PAYMENT",
+                    "amount": amount,
+                    "oldbalanceOrg": 1000.0,
+                    "newbalanceOrig": 1000.0 - amount,
+                    "txn_velocity_1h": 1,
+                    "isFraud": is_fraud,
+                }
+            )
+    path = tmp_path / "evaluation.parquet"
+    pd.DataFrame(rows).to_parquet(path, index=False)
+    return path
+
+
 def test_run_benchmark_returns_latency_and_quality_metrics():
     report = run_benchmark(
         BenchmarkConfig(
@@ -61,7 +88,7 @@ def test_run_benchmark_returns_latency_and_quality_metrics():
     quality = report["quality_at_budget"]
     assert 0.0 <= quality["precision"] <= 1.0
     assert 0.0 <= quality["recall"] <= 1.0
-    assert report["model_source"] == "demo_models"
+    assert report["model_source"] == "demo"
 
 
 def test_save_benchmark_report_writes_json(tmp_path: Path):
@@ -74,6 +101,7 @@ def test_save_benchmark_report_writes_json(tmp_path: Path):
 
 def test_run_benchmark_with_trained_model_artifacts(tmp_path: Path):
     if_path, ae_path, sgd_path = _write_dummy_ensemble_artifacts(tmp_path)
+    evaluation_path = _write_evaluation_parquet(tmp_path)
     report = run_benchmark(
         BenchmarkConfig(
             n_events=100,
@@ -81,11 +109,21 @@ def test_run_benchmark_with_trained_model_artifacts(tmp_path: Path):
             if_model_path=if_path,
             ae_model_path=ae_path,
             sgd_model_path=sgd_path,
+            evaluation_parquet=evaluation_path,
         )
     )
     assert report["events_total"] == 100
     assert report["model_source"] == "trained_artifacts"
     assert report["model_paths"]["if_model_path"] == str(if_path)
+    assert report["dataset"]["split"] == "chronological_test"
+    assert len(report["dataset"]["dataset_hash"]) == 64
+    assert "pr_auc" in report["quality_at_budget"]
+    assert set(report["quality_at_threshold"]) >= {
+        "true_positive",
+        "false_positive",
+        "false_negative",
+        "true_negative",
+    }
 
 
 def test_run_benchmark_trained_models_missing_artifact_raises(tmp_path: Path):
@@ -95,6 +133,20 @@ def test_run_benchmark_trained_models_missing_artifact_raises(tmp_path: Path):
         run_benchmark(
             BenchmarkConfig(
                 n_events=20,
+                use_trained_models=True,
+                if_model_path=if_path,
+                ae_model_path=ae_path,
+                sgd_model_path=sgd_path,
+                evaluation_parquet=_write_evaluation_parquet(tmp_path),
+            )
+        )
+
+
+def test_trained_benchmark_requires_representative_evaluation_data(tmp_path: Path):
+    if_path, ae_path, sgd_path = _write_dummy_ensemble_artifacts(tmp_path)
+    with pytest.raises(ValueError, match="require evaluation_parquet"):
+        run_benchmark(
+            BenchmarkConfig(
                 use_trained_models=True,
                 if_model_path=if_path,
                 ae_model_path=ae_path,

@@ -12,14 +12,64 @@ groups:
           description: "feedback_publish_errors_total increased in the last 5 minutes."
 
       - alert: OnlineConsumerStalled
-        expr: increase(online_consumer_messages_total[5m]) == 0
-        for: 10m
+        expr: online_consumer_lag > 0 and increase(online_consumer_commits_total[10m]) == 0
+        for: 5m
         labels:
           severity: warning
           service: online_consumer
         annotations:
           summary: "Online feedback consumer appears stalled"
-          description: "No feedback messages were consumed in the last 5 minutes."
+          description: "Kafka has pending feedback and no durable offset commits occurred for 10 minutes."
+
+      - alert: OnlineConsumerLagHigh
+        expr: online_consumer_lag > 1000
+        for: 10m
+        labels:
+          severity: warning
+          service: online_consumer
+        annotations:
+          summary: "Online feedback consumer lag is high"
+          description: "The updater is more than 1,000 Kafka records behind."
+
+      - alert: FeedbackOutboxBacklogHigh
+        expr: outbox_backlog > 100
+        for: 10m
+        labels:
+          severity: warning
+          service: outbox_relay
+        annotations:
+          summary: "Feedback outbox backlog is high"
+          description: "More than 100 durable feedback records await Kafka publication."
+
+      - alert: StreamDlqRatioHigh
+        expr: rate(stream_events_dlq_total[10m]) / clamp_min(rate(stream_events_in_total[10m]), 1e-9) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+          service: stream_processor
+        annotations:
+          summary: "Stream DLQ ratio exceeds one percent"
+          description: "Investigate schema, feature, scoring, or late-event failures."
+
+      - alert: StreamP95LatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(stream_event_processing_latency_ms_bucket[5m]))) > 500
+        for: 10m
+        labels:
+          severity: warning
+          service: stream_processor
+        annotations:
+          summary: "Stream p95 processing latency exceeds 500 ms"
+          description: "The local processing latency SLO has been exceeded for 10 minutes."
+
+      - alert: OnlineModelStale
+        expr: online_model_age_seconds > 86400
+        for: 30m
+        labels:
+          severity: warning
+          service: online_consumer
+        annotations:
+          summary: "Online champion model is older than 24 hours"
+          description: "Check feedback flow, candidate evaluation, and MLflow promotion health."
 
       - alert: PromotionFailuresDetected
         expr: increase(promotion_fail_total[15m]) > 0
