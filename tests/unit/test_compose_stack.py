@@ -13,7 +13,7 @@ def test_compose_defines_containerized_application_and_topic_bootstrap():
         "taskmanager:",
     ]:
         assert service in text
-    assert "KAFKA_AUTO_CREATE_TOPICS_ENABLE: \"false\"" in text
+    assert 'KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"' in text
     assert "condition: service_healthy" in text
     assert "feedback_api_key" in text
     assert "redis:" not in text

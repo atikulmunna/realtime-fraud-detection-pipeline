@@ -1,6 +1,6 @@
 # Realtime Fraud Detection Pipeline
 
-A production-reference candidate for event-time fraud scoring, durable analyst feedback, guarded online learning, immutable model promotion, and operational monitoring.
+A production-reference implementation for event-time fraud scoring, durable analyst feedback, guarded online learning, immutable model promotion, and operational monitoring.
 
 > Release status: **production-reference qualified** on 2026-07-22. The locked environment, static gates, unit/recovery suite, Compose service chain, container build, and Kubernetes renders passed. See [`TASKS.md`](TASKS.md) and [`release/evidence.json`](release/evidence.json).
 
@@ -81,6 +81,8 @@ uv run pytest tests/integration -m integration --no-cov
 ## Operations
 
 - Feedback API: `http://localhost:8000`
+- Online updater health and metrics: `http://localhost:8002/health`, `http://localhost:8002/metrics`
+- Outbox relay health and metrics: `http://localhost:8003/health`, `http://localhost:8003/metrics`
 - MLflow: `http://localhost:5000`
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3000`
