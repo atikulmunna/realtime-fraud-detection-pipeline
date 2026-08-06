@@ -4,10 +4,11 @@
 # Safe to re-run. Intended to be the single command after an instance start:
 # it refreshes the public address, preflights the models, and brings the stack up.
 #
-# The preflight model check is the important part: the Flink image pins a
-# different scikit-learn than the one the artifacts were trained with, and a
-# version mismatch surfaces as a job that dies on startup rather than as a
-# build failure. Catch it here, before an evaluator is given the URL.
+# The preflight model check is the important part. Model artifacts are joblib
+# pickles that cross from training into this image, and they do not survive a
+# numpy major-version boundary. A mismatch surfaces as a job that dies on
+# startup rather than as a build failure, so catch it here, before an evaluator
+# is given the URL. See docs/aws_demo_deployment.md for the version contract.
 #
 # Set SKIP_URL_REFRESH=1 to leave DEMO_BASE_URL untouched, for example when the
 # instance has an Elastic IP or is reached through a domain name.
@@ -58,9 +59,11 @@ docker run --rm \
   -v "$REPO_ROOT/models:/opt/fraud/models:ro" \
   --entrypoint python3 \
   realtime-fraud/flink:local -c '
-import sys, warnings, joblib, sklearn
+import sys, warnings, joblib, numpy, sklearn
+# InconsistentVersionWarning means the scores may be silently wrong, which for a
+# fraud demo is worse than a crash. Treat it as a failure, not a note.
 warnings.simplefilter("error", UserWarning)
-print("flink image scikit-learn:", sklearn.__version__)
+print("  flink image: numpy", numpy.__version__, "| scikit-learn", sklearn.__version__)
 failed = []
 for name in ("isolation_forest_v1", "autoencoder_v1", "sgd_classifier_v1"):
     path = f"/opt/fraud/models/{name}.joblib"
@@ -72,7 +75,9 @@ for name in ("isolation_forest_v1", "autoencoder_v1", "sgd_classifier_v1"):
         print("  FAILED ", name, type(exc).__name__, exc)
 if failed:
     print("\nThe Flink image cannot load:", ", ".join(failed))
-    print("Align infra/flink/requirements.txt with the training environment, or retrain.")
+    print("Artifacts must be trained with the same numpy and scikit-learn this image")
+    print("installs. Retrain with: uv run python -m src.models.train_{if,ae,sgd}")
+    print("See docs/aws_demo_deployment.md, section \"The numpy ceiling\".")
     sys.exit(1)
 ' || fail "Model preflight failed. The streaming job would crash on startup."
 

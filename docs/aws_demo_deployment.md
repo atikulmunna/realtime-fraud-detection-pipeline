@@ -112,19 +112,35 @@ scripts/deploy/start-demo.sh
 
 `start-demo.sh` runs a preflight that loads all three artifacts inside the Flink image before starting anything. Read the section below if it fails.
 
-## The scikit-learn version split
+## The numpy ceiling
 
-`infra/flink/requirements.txt` pins `scikit-learn==1.5.2`. The application image pins `1.9.0`. The committed artifacts were trained on `1.8.0`.
+Model artifacts are joblib pickles written by training and read by both the app image and the Flink image. Those pickles do not survive a numpy major-version boundary. An `MLPRegressor` embeds an MT19937 BitGenerator, and ndarrays reference `numpy._core`, neither of which numpy 1 can read from a numpy 2 pickle. The failure looks like this:
 
-Loading a 1.8.0 pickle under 1.5.2 is a downgrade. Unlike the forward direction, which raises `InconsistentVersionWarning` and usually still works, a downgrade frequently raises `AttributeError` or `ModuleNotFoundError` because the older library has no definition for attributes the newer one wrote. The failure appears as a Flink job that dies seconds after submission, which is easy to mistake for a Kafka problem.
+```
+isolation_forest_v1  ModuleNotFoundError: No module named 'numpy._core'
+autoencoder_v1       ValueError: <class 'numpy.random._mt19937.MT19937'> is not a known BitGenerator module
+```
 
-The preflight in `start-demo.sh` catches this before an evaluator sees it. If it fails, pick one:
+It surfaces as a Flink job that dies seconds after submission, which reads like a Kafka problem.
 
-1. Retrain against the pinned version. Most correct, and it also clears the existing 1.8.0 to 1.9.0 warnings.
-2. Raise the Flink pin to match the training version, then rebuild and rerun the preflight. Verify PyFlink still imports, since the Flink 1.19 image constrains the Python version.
-3. Retrain a fresh set on the host. Requires downloading PaySim, which is slow on 2 vCPU.
+`apache-flink==1.19.1` pins `numpy<1.25`, so that ceiling propagates to the entire project. Every environment is therefore aligned on the same versions:
 
-Do not suppress the warning and proceed. scikit-learn raises it because scores may be silently wrong, which for a fraud demo means numbers that look plausible and are not.
+| Environment | Python | numpy | scikit-learn |
+| --- | --- | --- | --- |
+| Training and tests | 3.11 | 1.24.4 | 1.7.2 |
+| App image | 3.11 | 1.24.4 | 1.7.2 |
+| Flink image | 3.10 | 1.24.4 | 1.7.2 |
+
+Python differs between images because the `flink:1.19.1` base is Ubuntu 22.04, whose `python3` is 3.10. That is fine: pickles are portable across Python minor versions when the library versions match. It does constrain scikit-learn, since 1.8 and newer require Python 3.11, which is why the pin sits on the 1.7 line.
+
+Two guards keep this from drifting back:
+
+- `tests/unit/test_dependency_alignment.py` fails if `requirements.txt` and `infra/flink/requirements.txt` disagree on numpy, scikit-learn, scipy, or joblib, or if numpy crosses the PyFlink ceiling.
+- `start-demo.sh` loads all three artifacts inside the built Flink image with warnings promoted to errors, before starting anything.
+
+If you retrain, do it in the project environment (`uv run python -m src.models.train_*`). Training anywhere with numpy 2 produces artifacts the streaming job cannot read.
+
+Raising numpy past 1.25 requires upgrading Flink first, which also means a new base image and a matching `flink-sql-connector-kafka` jar.
 
 ## What the evaluator sees
 

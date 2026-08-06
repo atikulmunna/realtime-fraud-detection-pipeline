@@ -1,5 +1,25 @@
+# Python dependencies for the PyFlink image.
+#
+# The ML stack here MUST match the versions in the root requirements.txt, which
+# is exported from uv.lock. Model artifacts are joblib pickles produced by
+# training and read by both this image and the app image, and joblib pickles do
+# not survive a numpy major-version boundary: an MLPRegressor carries an MT19937
+# BitGenerator, and ndarrays reference numpy._core, neither of which numpy 1 can
+# read from a numpy 2 pickle.
+#
+# apache-flink 1.19.1 pins numpy<1.25, so that ceiling propagates to the whole
+# project. See pyproject.toml. Raising it requires upgrading Flink first.
+#
+# scikit-learn 1.7.x is the newest line that still supports the Python 3.10 in
+# the flink:1.19.1 base image (1.8+ requires Python 3.11).
+#
+# numpy and scipy are pinned explicitly even though they arrive transitively,
+# so the match with requirements.txt is visible here and enforced by
+# tests/unit/test_dependency_alignment.py.
 apache-flink==1.19.1
-joblib==1.4.2
-jsonschema==4.23.0
-prometheus-client==0.21.1
-scikit-learn==1.5.2
+joblib==1.5.3
+jsonschema==4.26.0
+numpy==1.24.4
+prometheus-client==0.25.0
+scikit-learn==1.7.2
+scipy==1.15.3
