@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # Build, verify, and start the demo stack on the deployment host.
 #
+# Safe to re-run. Intended to be the single command after an instance start:
+# it refreshes the public address, preflights the models, and brings the stack up.
+#
 # The preflight model check is the important part: the Flink image pins a
 # different scikit-learn than the one the artifacts were trained with, and a
 # version mismatch surfaces as a job that dies on startup rather than as a
 # build failure. Catch it here, before an evaluator is given the URL.
+#
+# Set SKIP_URL_REFRESH=1 to leave DEMO_BASE_URL untouched, for example when the
+# instance has an Elastic IP or is reached through a domain name.
 
 set -euo pipefail
 
@@ -27,6 +33,22 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 for model in "${REQUIRED_MODELS[@]}"; do
   [[ -f "$model" ]] || fail "$model is missing. Upload the trained artifacts before starting."
 done
+
+# A stopped instance is assigned a new public IP on start. DEMO_BASE_URL feeds
+# Grafana's root_url and Prometheus's external-url, and a stale value breaks
+# Grafana's login redirect. Refresh it before Compose reads the file, and leave
+# every credential in place so anything already given to an evaluator still works.
+if [[ "${SKIP_URL_REFRESH:-0}" == "1" ]]; then
+  echo "==> Skipping public address refresh (SKIP_URL_REFRESH=1)"
+else
+  echo "==> Checking the public address"
+  # stderr is suppressed because the only expected failure here is "not on EC2",
+  # and its message tells the reader to pass --base-url, which is not the advice
+  # that applies in this context.
+  if ! scripts/deploy/make-secrets.sh --base-url-only 2>/dev/null; then
+    echo "    No EC2 public IP detected. Leaving DEMO_BASE_URL unchanged."
+  fi
+fi
 
 echo "==> Building application and Flink images"
 "${COMPOSE[@]}" build

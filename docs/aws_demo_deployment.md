@@ -31,9 +31,38 @@ The decisive variable is uptime, not instance size.
 
 Run the instance only around evaluation windows. A stopped instance costs only its EBS volume, roughly $2.40 per month. Stopping and starting is the entire cost strategy: leaving it running for a month is the only way to breach the budget.
 
-A stopped instance releases its public IP unless an Elastic IP is attached. Either allocate an Elastic IP so the URL is stable, or re-run `scripts/deploy/make-secrets.sh --force --base-url http://<new-ip>` after each start. An Elastic IP costs the same $0.005/hour whether or not the instance runs.
-
 Set a billing alert before launching: AWS Billing, Budgets, then a monthly cost budget at $40 with an alert at 50 percent.
+
+## Running on demand
+
+The cheapest pattern is to keep the instance stopped and start it only when someone asks for a demo. A stopped instance costs its EBS volume and nothing else, because the auto-assigned public IP is released on stop.
+
+| Demo frequency | Monthly cost |
+| --- | --- |
+| Idle all month | $2.40 |
+| One 2-hour demo | $2.58 |
+| Four 2-hour demos | $3.11 |
+| Two 3-hour demos a week | $4.52 |
+
+Two practical notes.
+
+**Allow 5 to 8 minutes of cold start.** Instance boot is under a minute, but Kafka, Postgres, MLflow, and both Flink processes have to pass healthchecks, the streaming job has to be resubmitted, and the dashboard needs a couple of minutes of traffic before the rate panels are meaningful. Start it before announcing it is ready. Nothing is rebuilt or re-seeded: the Docker layer cache and every named volume live on the EBS volume and survive a stop.
+
+**The public IP changes on every start.** `DEMO_BASE_URL` feeds Grafana's `root_url` and Prometheus's `external-url`, and a stale value breaks Grafana's login redirect. `start-demo.sh` detects the current address from instance metadata and refreshes it automatically, so restarting is still one command:
+
+```bash
+scripts/deploy/start-demo.sh
+```
+
+Credentials are never rotated by that refresh, so anything already given to an evaluator keeps working. To refresh the address by itself:
+
+```bash
+scripts/deploy/make-secrets.sh --base-url-only
+```
+
+Do not use `--force` for this. It regenerates every credential, which invalidates the Grafana password and API key an evaluator may already hold.
+
+An Elastic IP removes the address change but bills $0.005/hour whether or not the instance runs, which is about $3.65 per month of otherwise idle time. For an occasional-demo pattern that more than doubles the standing cost and is rarely worth it. If you do attach one, or you front the instance with a domain name, set `SKIP_URL_REFRESH=1` so the start script leaves `DEMO_BASE_URL` alone.
 
 ## Launch
 
@@ -133,9 +162,9 @@ docker compose -f infra/docker-compose.yml -f infra/docker-compose.demo.yml \
 scripts/deploy/stop-demo.sh          # stop containers, keep volumes
 ```
 
-Then stop the instance from the EC2 console or with `aws ec2 stop-instances`. **Stopping the containers does not stop the billing. Only stopping the instance does.**
+Then stop the instance from the EC2 console or with `aws ec2 stop-instances --instance-ids <id>`. **Stopping the containers does not stop the billing. Only stopping the instance does.**
 
-Restarting is `scripts/deploy/start-demo.sh`, plus regenerating `DEMO_BASE_URL` if the public IP changed and no Elastic IP is attached.
+Restarting is `scripts/deploy/start-demo.sh` on its own. It refreshes the public address before bringing the stack up.
 
 `scripts/deploy/stop-demo.sh --destroy` also removes the volumes. That discards Kafka offsets, feedback rows, MLflow versions, and Flink checkpoints, and cannot be undone.
 

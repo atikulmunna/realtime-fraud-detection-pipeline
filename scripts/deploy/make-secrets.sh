@@ -1,41 +1,60 @@
 #!/usr/bin/env bash
-# Generate the per-deployment secrets the demo overlay expects.
+# Generate or refresh the per-deployment configuration the demo overlay expects.
 #
-#   infra/.env                      Compose variables, including DEMO_BASE_URL
+#   infra/.env                           Compose variables, including DEMO_BASE_URL
 #   infra/secrets/feedback_api_key.txt   API key for the feedback service
-#   infra/caddy/auth.conf           bcrypt basic_auth block for the proxy
+#   infra/caddy/auth.conf                bcrypt basic_auth block for the proxy
 #
-# Existing files are left alone unless --force is passed, so re-running after a
-# reboot does not silently invalidate credentials already handed to an evaluator.
+# Modes:
+#   (default)         Generate everything. Refuses to overwrite an existing setup.
+#   --force           Regenerate everything, rotating every credential.
+#   --base-url-only   Rewrite DEMO_BASE_URL and leave all credentials alone.
+#
+# --base-url-only exists because a stopped EC2 instance gets a new public IP on
+# every start. The address has to be refreshed, but rotating the Grafana password
+# and API key at the same time would invalidate credentials already handed to an
+# evaluator.
 #
 # Usage:
-#   scripts/deploy/make-secrets.sh [--force] [--base-url http://example.com]
+#   scripts/deploy/make-secrets.sh
+#   scripts/deploy/make-secrets.sh --force
+#   scripts/deploy/make-secrets.sh --base-url-only
+#   scripts/deploy/make-secrets.sh --base-url-only --base-url http://203.0.113.10
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FORCE=0
+BASE_URL_ONLY=0
 BASE_URL=""
+
+usage() {
+  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  exit "${1:-0}"
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --force) FORCE=1; shift ;;
-    --base-url) BASE_URL="$2"; shift 2 ;;
-    *) echo "Unknown argument: $1" >&2; exit 2 ;;
+    --base-url-only) BASE_URL_ONLY=1; shift ;;
+    --base-url) BASE_URL="${2:-}"; [[ -n "$BASE_URL" ]] || { echo "--base-url needs a value" >&2; exit 2; }; shift 2 ;;
+    -h|--help) usage 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage 2 ;;
   esac
 done
+
+if [[ $FORCE -eq 1 && $BASE_URL_ONLY -eq 1 ]]; then
+  echo "--force and --base-url-only are mutually exclusive." >&2
+  exit 2
+fi
 
 ENV_FILE="$REPO_ROOT/infra/.env"
 API_KEY_FILE="$REPO_ROOT/infra/secrets/feedback_api_key.txt"
 AUTH_FILE="$REPO_ROOT/infra/caddy/auth.conf"
 
-if [[ $FORCE -eq 0 && -f "$ENV_FILE" ]]; then
-  echo "infra/.env already exists. Re-run with --force to regenerate all credentials." >&2
-  exit 1
-fi
-
 random_secret() {
-  # 32 URL-safe bytes. tr -d avoids '+' and '/' leaking into shell-quoted contexts.
+  # 32 URL-safe characters. Stripping +/= keeps the value safe to paste into a
+  # shell, a .env line, and an HTTP header without quoting surprises.
   openssl rand -base64 48 | tr -d '\n+/=' | cut -c1-32
 }
 
@@ -55,14 +74,65 @@ detect_base_url() {
   echo ""
 }
 
-if [[ -z "$BASE_URL" ]]; then
-  BASE_URL="$(detect_base_url)"
+resolve_base_url() {
+  if [[ -z "$BASE_URL" ]]; then
+    BASE_URL="$(detect_base_url)"
+  fi
+  if [[ -z "$BASE_URL" ]]; then
+    echo "Could not determine the public address. Pass --base-url http://<host>." >&2
+    exit 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Address-only refresh
+# ---------------------------------------------------------------------------
+
+if [[ $BASE_URL_ONLY -eq 1 ]]; then
+  [[ -f "$ENV_FILE" ]] || { echo "infra/.env does not exist. Run without --base-url-only first." >&2; exit 1; }
+  resolve_base_url
+
+  current="$(grep -E '^DEMO_BASE_URL=' "$ENV_FILE" | cut -d= -f2- || true)"
+  if [[ "$current" == "$BASE_URL" ]]; then
+    echo "DEMO_BASE_URL is already $BASE_URL. Nothing to do."
+    exit 0
+  fi
+
+  # '|' as the delimiter because the replacement is a URL containing '/'.
+  if grep -qE '^DEMO_BASE_URL=' "$ENV_FILE"; then
+    sed -i "s|^DEMO_BASE_URL=.*|DEMO_BASE_URL=$BASE_URL|" "$ENV_FILE"
+  else
+    echo "DEMO_BASE_URL=$BASE_URL" >> "$ENV_FILE"
+  fi
+  chmod 600 "$ENV_FILE"
+
+  echo "DEMO_BASE_URL updated."
+  echo "  was  ${current:-<unset>}"
+  echo "  now  $BASE_URL"
+  echo
+  echo "Credentials are unchanged. Restart the affected services to pick it up:"
+  echo "  scripts/deploy/start-demo.sh"
+  exit 0
 fi
 
-if [[ -z "$BASE_URL" ]]; then
-  echo "Could not determine the public address. Pass --base-url http://<host>." >&2
+# ---------------------------------------------------------------------------
+# Full generation
+# ---------------------------------------------------------------------------
+
+if [[ $FORCE -eq 0 && -f "$ENV_FILE" ]]; then
+  cat >&2 <<'EOF'
+infra/.env already exists.
+
+  To refresh only the public address after a restart, keeping every credential:
+    scripts/deploy/make-secrets.sh --base-url-only
+
+  To rotate every credential and start over:
+    scripts/deploy/make-secrets.sh --force
+EOF
   exit 1
 fi
+
+resolve_base_url
 
 POSTGRES_PASSWORD="$(random_secret)"
 GRAFANA_ADMIN_PASSWORD="$(random_secret)"
@@ -108,4 +178,8 @@ Credentials generated. Record these now; the plaintext is not stored anywhere.
 
 Prometheus, MLflow, and the Flink REST path sit behind the proxy basic auth.
 Grafana keeps its own separate login.
+
+After a stop and start the public IP changes. Refresh it without rotating any
+of the above:
+  scripts/deploy/make-secrets.sh --base-url-only
 EOF
