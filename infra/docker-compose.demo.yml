@@ -1,0 +1,221 @@
+# Demo deployment overlay for a single 8 GB host.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile streaming up -d
+#
+# What this overlay changes:
+#   1. Adds Caddy as the only public entry point, plus a synthetic traffic generator.
+#   2. Caps every container and pins the JVM heaps. Kafka and Flink size themselves
+#      from total host memory by default and will overshoot a cgroup limit, so the
+#      limits alone are not enough.
+#   3. Moves Grafana, Prometheus, and MLflow onto sub paths behind the proxy.
+#   4. Swaps the example API key secret for a real generated one.
+#
+# The base file publishes host ports for Postgres, Kafka, and the UIs. Compose merges
+# port lists and cannot unpublish them, so the AWS security group is the control that
+# keeps them off the internet: open 80 and 22 only. Note that Docker's own iptables
+# rules bypass a host firewall such as ufw, so the security group is what matters.
+
+services:
+  zookeeper:
+    environment:
+      KAFKA_HEAP_OPTS: "-Xmx256m -Xms256m"
+    deploy:
+      resources:
+        limits:
+          memory: 400M
+
+  kafka:
+    environment:
+      KAFKA_HEAP_OPTS: "-Xmx768m -Xms768m"
+    deploy:
+      resources:
+        limits:
+          memory: 1100M
+
+  postgres:
+    deploy:
+      resources:
+        limits:
+          memory: 400M
+
+  mlflow:
+    command:
+      - "mlflow"
+      - "server"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "5000"
+      - "--backend-store-uri"
+      - "postgresql+psycopg2://fraud:${POSTGRES_PASSWORD:-fraud-local}@postgres:5432/fraud"
+      - "--default-artifact-root"
+      - "mlflow-artifacts:/"
+      - "--artifacts-destination"
+      - "/mlartifacts"
+      - "--serve-artifacts"
+      - "--static-prefix"
+      - "/mlflow"
+    # --static-prefix relocates every route, health included.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/mlflow/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    deploy:
+      resources:
+        limits:
+          memory: 500M
+
+  feedback-api:
+    # --root-path makes the OpenAPI console emit /api-prefixed URLs behind the proxy.
+    # It affects generated links only, so the container-local healthcheck stays at /health.
+    command:
+      - "uvicorn"
+      - "src.api.app_entry:app_factory"
+      - "--factory"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--root-path"
+      - "/api"
+    deploy:
+      resources:
+        limits:
+          memory: 450M
+
+  outbox-relay:
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+
+  online-updater:
+    deploy:
+      resources:
+        limits:
+          memory: 500M
+
+  prometheus:
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - "--web.external-url=${DEMO_BASE_URL:?set DEMO_BASE_URL in infra/.env}/prometheus/"
+      - "--web.route-prefix=/prometheus"
+      # A demo does not need long retention, and the root volume is small.
+      - "--storage.tsdb.retention.time=12h"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/prometheus/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 500M
+
+  grafana:
+    environment:
+      GF_SERVER_ROOT_URL: "${DEMO_BASE_URL:?set DEMO_BASE_URL in infra/.env}/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in infra/.env}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/grafana/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 350M
+
+  jobmanager:
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        state.checkpoints.dir: file:///opt/flink/checkpoints
+        jobmanager.memory.process.size: 1000m
+    deploy:
+      resources:
+        limits:
+          memory: 1100M
+
+  taskmanager:
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 2
+        state.checkpoints.dir: file:///opt/flink/checkpoints
+        taskmanager.memory.process.size: 1400m
+    deploy:
+      resources:
+        limits:
+          memory: 1500M
+
+  traffic-generator:
+    build:
+      context: ..
+      dockerfile: infra/app/Dockerfile
+    image: realtime-fraud/app:local
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    command:
+      - "python"
+      - "-m"
+      - "src.demo.traffic_generator"
+      - "--bootstrap-servers"
+      - "kafka:29092"
+      - "--topic"
+      - "raw-events"
+      - "--rate"
+      - "${DEMO_TRAFFIC_RATE:-8}"
+      - "--fraud-ratio"
+      - "${DEMO_FRAUD_RATIO:-0.04}"
+      - "--users"
+      - "500"
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+    networks: [fraud-backplane]
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      grafana:
+        condition: service_healthy
+      feedback-api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Generated by scripts/deploy/make-secrets.sh. Caddy refuses to start without it.
+      - ./caddy/auth.conf:/etc/caddy/auth.conf:ro
+      - ./caddy/site:/srv:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks: [fraud-edge]
+
+secrets:
+  feedback_api_key:
+    file: ./secrets/feedback_api_key.txt
+
+volumes:
+  caddy_data:
+  caddy_config:

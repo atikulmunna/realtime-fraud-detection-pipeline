@@ -38,6 +38,9 @@ logs/
 infra/secrets/*.txt
 desktop.ini
 
+# Generated deployment credentials
+infra/caddy/auth.conf
+
 # Quality reports
 .coverage
 coverage.xml

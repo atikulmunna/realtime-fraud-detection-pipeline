@@ -1,0 +1,17 @@
+# Normalize text in the repository, and force LF on files that are executed by a
+# Linux shell or copied into a container. A CRLF checkout of these on Windows
+# would otherwise be committed back and fail on the deployment host with
+# "bash: \r: command not found".
+* text=auto
+
+*.sh text eol=lf
+Dockerfile text eol=lf
+Caddyfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+*.ps1 text eol=crlf
+
+*.joblib binary
+*.parquet binary
+*.png binary

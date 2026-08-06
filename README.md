@@ -26,10 +26,11 @@ flowchart LR
   PR --> GR[Grafana]
 ```
 
-The repository supports two topologies:
+The repository supports three topologies:
 
 - Development: locked Python 3.11 environment and isolated unit tests.
 - Compose: containerized API, outbox relay, updater, Kafka, Postgres, MLflow, Flink, Prometheus, and Grafana.
+- Demo deployment: the Compose stack on a single host behind a reverse proxy, with a synthetic traffic generator, for live evaluation. See [AWS demo deployment](docs/aws_demo_deployment.md).
 
 See [architecture](docs/architecture.md) and [contracts and guarantees](docs/contracts_and_guarantees.md) for the detailed boundaries.
 
@@ -101,6 +102,7 @@ Runbooks:
 - [Compose operations](docs/compose_runbook.md)
 - [Observability and alerts](docs/observability_runbook.md)
 - [Local demo](docs/local_demo_runbook.md)
+- [AWS demo deployment](docs/aws_demo_deployment.md)
 
 ## Project map
 
@@ -109,7 +111,9 @@ Runbooks:
 - `src/streaming`: contracts, scoring, and the checkpointed PyFlink job.
 - `src/api`: authenticated feedback ingestion and transactional outbox.
 - `src/online`: idempotent online updates, guardrails, and promotion.
-- `infra`: Compose, Dockerfiles, Prometheus, and Grafana.
+- `src/demo`: local demo flow, readiness checks, and the synthetic traffic generator.
+- `infra`: Compose, Dockerfiles, Prometheus, Grafana, and the demo reverse proxy.
+- `scripts/deploy`: single-host deployment bootstrap, credential generation, and lifecycle.
 - `tests`: unit, recovery/performance, and opt-in Compose integration tests.
 
 Runtime datasets, model artifacts, reports, logs, secrets, and checkpoint state are intentionally not source-controlled.

@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Realtime Fraud Detection Pipeline: Live Demo</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #16181d;
+    --muted: #5c6270;
+    --line: #e3e6ec;
+    --card: #f7f8fa;
+    --accent: #1f5fd8;
+    --code: #f0f2f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101216;
+      --fg: #e8eaee;
+      --muted: #9aa2b1;
+      --line: #262a33;
+      --card: #171a20;
+      --accent: #6f9bff;
+      --code: #1b1f26;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2.5rem 1.25rem 4rem;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 56rem; margin: 0 auto; }
+  h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 .5rem; letter-spacing: -.01em; }
+  h2 { font-size: 1.15rem; margin: 2.5rem 0 .75rem; letter-spacing: -.005em; }
+  .lede { color: var(--muted); margin: 0 0 2rem; max-width: 46rem; }
+  .grid { display: grid; gap: .875rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+  .card {
+    display: block;
+    padding: 1.125rem 1.25rem;
+    border: 1px solid var(--line);
+    border-radius: .625rem;
+    background: var(--card);
+    text-decoration: none;
+    color: inherit;
+    transition: border-color .15s ease, transform .15s ease;
+  }
+  .card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .card strong { display: block; font-size: 1rem; margin-bottom: .25rem; color: var(--accent); }
+  .card span { display: block; color: var(--muted); font-size: .875rem; }
+  .tag {
+    display: inline-block;
+    margin-top: .625rem;
+    padding: .0625rem .5rem;
+    border: 1px solid var(--line);
+    border-radius: 1rem;
+    font-size: .75rem;
+    color: var(--muted);
+    background: var(--bg);
+  }
+  ol { padding-left: 1.25rem; }
+  ol li { margin-bottom: .5rem; }
+  pre {
+    background: var(--code);
+    border: 1px solid var(--line);
+    border-radius: .5rem;
+    padding: .875rem 1rem;
+    overflow-x: auto;
+    font-size: .8125rem;
+    line-height: 1.55;
+  }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  p code { background: var(--code); padding: .0625rem .3125rem; border-radius: .25rem; font-size: .875rem; }
+  footer {
+    margin-top: 3rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: .8125rem;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Realtime Fraud Detection Pipeline</h1>
+  <p class="lede">
+    A live deployment of an event-time fraud scoring system: Kafka ingestion, checkpointed PyFlink
+    scoring, an authenticated analyst feedback API backed by a transactional outbox, guarded online
+    model updates with MLflow promotion, and Prometheus and Grafana monitoring. A generator publishes
+    synthetic transactions continuously, so every surface below carries live data.
+  </p>
+
+  <h2>Start here</h2>
+  <div class="grid">
+    <a class="card" href="/grafana/">
+      <strong>Grafana dashboard</strong>
+      <span>Throughput, anomaly rate, scoring latency, DLQ volume, and online promotion activity.</span>
+      <span class="tag">Grafana login</span>
+    </a>
+    <a class="card" href="/api/docs">
+      <strong>Feedback API</strong>
+      <span>Interactive OpenAPI console. Submit analyst labels and watch them flow through the system.</span>
+      <span class="tag">X-API-Key</span>
+    </a>
+    <a class="card" href="/prometheus/graph">
+      <strong>Prometheus</strong>
+      <span>Raw metric series and the configured alert rules.</span>
+      <span class="tag">Demo login</span>
+    </a>
+    <a class="card" href="/mlflow/">
+      <strong>MLflow registry</strong>
+      <span>Model versions with candidate and champion aliases moved by the promotion guardrails.</span>
+      <span class="tag">Demo login</span>
+    </a>
+    <a class="card" href="/flink/overview">
+      <strong>Flink cluster status</strong>
+      <span>REST overview: task slots and running jobs. The full console needs an SSH tunnel.</span>
+      <span class="tag">Demo login</span>
+    </a>
+  </div>
+
+  <h2>Suggested walkthrough</h2>
+  <ol>
+    <li>Open the <a href="/grafana/">Grafana dashboard</a> and confirm transactions are being scored and a
+      share of them routed as anomalies.</li>
+    <li>Check <a href="/flink/overview">Flink cluster status</a> to see the streaming job running with
+      checkpointing enabled.</li>
+    <li>Submit analyst feedback through the <a href="/api/docs">API console</a> using the request below.
+      Send it twice with the same <code>Idempotency-Key</code> to confirm duplicate acceptance is exactly-once.</li>
+    <li>Return to Grafana and watch the feedback counter, the outbox drain, and the online update
+      metrics respond.</li>
+    <li>Open <a href="/mlflow/">MLflow</a> to see whether the candidate cleared the promotion guardrails
+      and took the <code>champion</code> alias.</li>
+  </ol>
+
+  <h2>Submitting feedback</h2>
+  <p>Replace <code>API_KEY</code> with the key supplied with this demo, and <code>HOST</code> with this page's address.</p>
+<pre><code>curl -X POST http://HOST/api/feedback \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: API_KEY" \
+  -H "Idempotency-Key: demo-001" \
+  -d '{
+    "anomaly_id": "demo-anomaly-001",
+    "label": "true_positive",
+    "analyst_id": "evaluator",
+    "features": {}
+  }'</code></pre>
+  <p>
+    The API commits the feedback row and its outbox row in a single Postgres transaction before it
+    acknowledges. The relay publishes to Kafka with an idempotent producer and <code>acks=all</code>.
+    The updater stages an SGD candidate and promotes it only after it clears the quality gates.
+  </p>
+
+  <footer>
+    Demo deployment. Traffic is synthetic and no real transaction data is present. Transport is
+    unencrypted HTTP and the stack is intended to be reachable only for the duration of an evaluation.
+  </footer>
+</main>
+</body>
+</html>
