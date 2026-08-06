@@ -10,11 +10,9 @@ The Compose stack separates the public feedback API from the internal backplane.
 
 Kafka has internal and host listeners, topic auto-creation is disabled, and `topic-init` creates the contract topics. Named volumes preserve Kafka, Postgres, MLflow, Flink checkpoints, Prometheus, and Grafana state. The PyFlink job is enabled with the `streaming` profile after trained IF, AE, and SGD artifacts exist.
 
-## Kubernetes topology
+## Scaling boundaries
 
-The Kustomize base deploys the API, relay, updater, and a Flink Operator `FlinkDeployment`. It does not deploy production Kafka, Postgres, MLflow/object storage, ingress, or a secrets manager. Those dependencies are supplied through ConfigMaps, external secrets, and an external RWX/object-backed model cache. Checkpoints and savepoints use external object storage.
-
-The API and relay may scale horizontally. The updater remains a single writer. Flink parallelism is managed by the operator and uses savepoint upgrades. Default-deny network policy, restricted pod security, resources, probes, disruption budgets, and autoscaling form the deployment baseline.
+The API and relay are stateless and may scale horizontally. The updater is a single writer and must not be replicated, because concurrent writers would race on candidate promotion. Flink scales through parallelism with savepoint-based upgrades. Any production deployment supplies Kafka, Postgres, MLflow/object storage, ingress, and secret management as external dependencies.
 
 ## Model lifecycle
 

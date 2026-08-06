@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: fraud-config
-data:
-  KAFKA_BOOTSTRAP_SERVERS: kafka.default.svc.cluster.local:9092
-  MLFLOW_TRACKING_URI: http://mlflow.default.svc.cluster.local:5000

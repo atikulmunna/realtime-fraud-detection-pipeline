@@ -23,10 +23,10 @@ Liveness reports process availability. Readiness fails closed for missing/corrup
 
 ## Security
 
-The feedback API requires `X-API-Key` outside development. Payloads forbid unknown fields. Compose mounts the local API key as a secret; Kubernetes expects an externally managed `fraud-secrets` object. Logs are JSON and correlate identifiers without logging API keys. Kubernetes containers drop capabilities, prohibit privilege escalation, run as non-root, and use default-deny network policy.
+The feedback API requires `X-API-Key` outside development. Payloads forbid unknown fields. Compose mounts the local API key as a secret; production deployments are expected to supply it from an external secret manager. Logs are JSON and correlate identifiers without logging API keys.
 
 API-key authentication is a reference minimum, not a complete internet-facing identity system. Production should add TLS, workload identity, analyst authorization, rate limiting, audit retention, secret rotation, encryption keys, and private network endpoints.
 
 ## Recovery
 
-Do not reset Kafka offsets or delete Postgres/outbox, MLflow, checkpoint, or savepoint data during incident response. Restore dependencies and allow replay. Roll models back by moving the MLflow `champion` alias. Roll Flink code through an operator savepoint upgrade. See the service-specific runbooks for commands.
+Do not reset Kafka offsets or delete Postgres/outbox, MLflow, checkpoint, or savepoint data during incident response. Restore dependencies and allow replay. Roll models back by moving the MLflow `champion` alias. Roll Flink code forward from a savepoint rather than from a cold start. See the service-specific runbooks for commands.

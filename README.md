@@ -2,8 +2,6 @@
 
 A production-reference implementation for event-time fraud scoring, durable analyst feedback, guarded online learning, immutable model promotion, and operational monitoring.
 
-> Release status: **production-reference qualified** on 2026-07-22. The locked environment, static gates, unit/recovery suite, Compose service chain, container build, and Kubernetes renders passed. See [`TASKS.md`](TASKS.md) and [`release/evidence.json`](release/evidence.json).
-
 ## Architecture
 
 ```mermaid
@@ -28,11 +26,10 @@ flowchart LR
   PR --> GR[Grafana]
 ```
 
-The repository supports three topologies:
+The repository supports two topologies:
 
 - Development: locked Python 3.11 environment and isolated unit tests.
 - Compose: containerized API, outbox relay, updater, Kafka, Postgres, MLflow, Flink, Prometheus, and Grafana.
-- Kubernetes: Kustomize resources for stateless services plus a Flink Kubernetes Operator deployment; production data services and secrets stay external.
 
 See [architecture](docs/architecture.md) and [contracts and guarantees](docs/contracts_and_guarantees.md) for the detailed boundaries.
 
@@ -49,11 +46,17 @@ docker compose -f infra/docker-compose.yml config --quiet
 
 The smoke script does not overwrite an existing model. It creates a deterministic local seed only if needed, builds the stack, submits uniquely identified feedback, waits for outbox publication, and waits for online candidate promotion.
 
-For real training:
+For real training, download PaySim and run the stages in order:
 
 ```powershell
-.\scripts\tasks.ps1 -Task download-data
-.\scripts\tasks.ps1 -Task train-all
+uv run python -m src.data.download_paysim --out data/raw
+uv run python -m src.data.prepare_paysim --input data/raw/<paysim>.csv --json
+uv run python -m src.data.feature_engineering `
+  --input data/raw/<paysim>.csv `
+  --output data/processed/paysim_features.parquet
+uv run python -m src.models.train_if --input data/processed/paysim_features.parquet
+uv run python -m src.models.train_ae --input data/processed/paysim_features.parquet
+uv run python -m src.models.train_sgd --input data/processed/paysim_features.parquet
 uv run python -m src.models.build_ensemble `
   --input data/processed/paysim_features.parquet `
   --output models/fraud_ensemble.joblib `
@@ -67,8 +70,6 @@ uv run ruff check src tests scripts
 uv run mypy src
 uv run pytest
 docker compose -f infra/docker-compose.yml config --quiet
-kubectl kustomize deploy/kubernetes/base
-kubectl kustomize deploy/kubernetes/overlays/development
 ```
 
 The opt-in real infrastructure test is:
@@ -99,7 +100,6 @@ Runbooks:
 - [Development and clean-machine verification](docs/development.md)
 - [Compose operations](docs/compose_runbook.md)
 - [Observability and alerts](docs/observability_runbook.md)
-- [Kubernetes deployment and rollback](docs/kubernetes_runbook.md)
 - [Local demo](docs/local_demo_runbook.md)
 
 ## Project map
@@ -110,7 +110,6 @@ Runbooks:
 - `src/api`: authenticated feedback ingestion and transactional outbox.
 - `src/online`: idempotent online updates, guardrails, and promotion.
 - `infra`: Compose, Dockerfiles, Prometheus, and Grafana.
-- `deploy/kubernetes`: cloud-neutral Kustomize base and development overlay.
 - `tests`: unit, recovery/performance, and opt-in Compose integration tests.
 
 Runtime datasets, model artifacts, reports, logs, secrets, and checkpoint state are intentionally not source-controlled.

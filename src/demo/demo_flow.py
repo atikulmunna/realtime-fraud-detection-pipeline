@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -169,3 +170,11 @@ def run_demo_flow(
         "api_feedback_requests_total": api_metrics.get_counter("feedback_requests_total"),
         "online_updates_total": online_metrics.get_counter("online_updates_total"),
     }
+
+
+def main() -> None:
+    print(json.dumps(run_demo_flow(), indent=2))
+
+
+if __name__ == "__main__":
+    main()

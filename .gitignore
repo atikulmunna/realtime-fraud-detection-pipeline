@@ -47,3 +47,10 @@ coverage.xml
 .pre-commit-cache/
 
 wiki.md
+
+# Local planning and spec notes
+CLAUDE.md
+TASKS.md
+tasks.md
+*srs*
+*SRS*
