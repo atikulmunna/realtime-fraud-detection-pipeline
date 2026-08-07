@@ -207,6 +207,7 @@ Restarting is `scripts/deploy/start-demo.sh` on its own. It refreshes the public
 This is a time-boxed demo configuration, not an internet-grade deployment. Stated plainly:
 
 - Traffic is plain HTTP. Credentials cross the network in the clear. Do not reuse any password used elsewhere.
+- `infra/secrets/feedback_api_key.txt` is mode 0644, readable by any local user on the instance. The app image runs as uid 999 and Compose bind-mounts file secrets with the host's ownership and mode, ignoring the `uid`/`gid`/`mode` fields outside swarm, so a stricter mode makes the API fail to start. Production should read the key from a secret manager rather than a file.
 - Basic auth in front of Prometheus, MLflow, and the Flink REST path is a gate, not an identity system.
 - There is no rate limiting, no audit retention, and no secret rotation.
 - All data is synthetic. No real transaction data is present, and none should be added.

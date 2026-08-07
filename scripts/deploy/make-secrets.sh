@@ -194,7 +194,20 @@ basic_auth {
 }
 EOF
 
-chmod 600 "$ENV_FILE" "$API_KEY_FILE" "$AUTH_FILE"
+chmod 600 "$ENV_FILE" "$AUTH_FILE"
+
+# The API key is the one secret consumed by a container that drops privileges:
+# the app image runs as uid 999 (fraud), while this file is owned by the host
+# user. Compose bind-mounts file-based secrets with the host's ownership and
+# mode verbatim, and outside swarm it ignores the uid/gid/mode fields, so 0600
+# makes the file unreadable inside the container and the API dies at startup
+# with PermissionError on /run/secrets/feedback_api_key.
+#
+# Docker Desktop on Windows does not preserve Linux ownership on bind mounts, so
+# this only manifests on a real Linux host. 0644 is acceptable for a
+# single-tenant, time-boxed demo instance; a production deployment should take
+# the key from a secret manager instead. See docs/aws_demo_deployment.md.
+chmod 644 "$API_KEY_FILE"
 
 cat <<EOF
 
