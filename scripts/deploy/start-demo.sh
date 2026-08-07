@@ -127,8 +127,18 @@ done
 # this script otherwise stacks duplicate jobs, and with a fixed number of task
 # slots the extras sit in RESTARTING forever.
 echo "==> Checking for an existing scoring job"
+# Parsed as JSON rather than grepped: Flink puts start-time between "name" and
+# "state", so a naive adjacent-field pattern silently never matches and the
+# guard becomes a no-op.
 running_jobs="$(curl -fsS --max-time 10 http://localhost:8081/jobs/overview 2>/dev/null \
-  | grep -o "\"name\":\"$FLINK_JOB_NAME\",\"state\":\"RUNNING\"" | wc -l || echo 0)"
+  | python3 -c "
+import json, sys
+try:
+    jobs = json.load(sys.stdin).get('jobs', [])
+except Exception:
+    print(0); raise SystemExit
+print(sum(1 for j in jobs if j.get('name') == '$FLINK_JOB_NAME' and j.get('state') in ('RUNNING', 'RESTARTING')))
+" 2>/dev/null || echo 0)"
 
 if [[ "${running_jobs:-0}" -gt 0 ]]; then
   echo "    '$FLINK_JOB_NAME' is already RUNNING. Not submitting another."
