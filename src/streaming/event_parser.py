@@ -14,7 +14,11 @@ from jsonschema.exceptions import ValidationError
 
 from src.common.feature_contract import LEAKAGE_FIELDS
 
-DEFAULT_EVENT_SCHEMA_PATH = Path("schemas/event_v1.json")
+# Resolved from the module location rather than the working directory. Flink's
+# Python harness executes UDFs from its own temp directory, where a CWD-relative
+# path raises FileNotFoundError and fails every record. `src` and `schemas` are
+# siblings both in the repository and in the image at /opt/fraud.
+DEFAULT_EVENT_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schemas" / "event_v1.json"
 TRANSACTION_TYPE_ALIASES = {"CASH-OUT": "CASH_OUT", "CASH-IN": "CASH_IN"}
 
 

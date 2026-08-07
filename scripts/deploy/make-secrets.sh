@@ -7,13 +7,18 @@
 #
 # Modes:
 #   (default)         Generate everything. Refuses to overwrite an existing setup.
-#   --force           Regenerate everything, rotating every credential.
+#   --force           Regenerate credentials, reusing the existing DB password.
 #   --base-url-only   Rewrite DEMO_BASE_URL and leave all credentials alone.
 #
 # --base-url-only exists because a stopped EC2 instance gets a new public IP on
 # every start. The address has to be refreshed, but rotating the Grafana password
 # and API key at the same time would invalidate credentials already handed to an
 # evaluator.
+#
+# --force reuses POSTGRES_PASSWORD on purpose. Postgres applies that value only
+# when it initialises an empty data directory, so once the stack has run, the
+# postgres_data volume still holds the old password and rotating it breaks the
+# API and MLflow. Pass --rotate-db-password to override, and recreate the volume.
 #
 # Usage:
 #   scripts/deploy/make-secrets.sh
@@ -26,10 +31,11 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FORCE=0
 BASE_URL_ONLY=0
+ROTATE_DB_PASSWORD=0
 BASE_URL=""
 
 usage() {
-  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -37,6 +43,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --force) FORCE=1; shift ;;
     --base-url-only) BASE_URL_ONLY=1; shift ;;
+    --rotate-db-password) ROTATE_DB_PASSWORD=1; shift ;;
     --base-url) BASE_URL="${2:-}"; [[ -n "$BASE_URL" ]] || { echo "--base-url needs a value" >&2; exit 2; }; shift 2 ;;
     -h|--help) usage 0 ;;
     *) echo "Unknown argument: $1" >&2; usage 2 ;;
@@ -134,7 +141,28 @@ fi
 
 resolve_base_url
 
-POSTGRES_PASSWORD="$(random_secret)"
+# Postgres writes POSTGRES_PASSWORD only when it initialises an empty data
+# directory. Once the stack has run, postgres_data still holds the original, so
+# rotating this value here would leave the API and MLflow failing with an opaque
+# "password authentication failed for user fraud". Carry the existing one forward.
+POSTGRES_PASSWORD=""
+if [[ -f "$ENV_FILE" && $ROTATE_DB_PASSWORD -eq 0 ]]; then
+  POSTGRES_PASSWORD="$(grep -E '^POSTGRES_PASSWORD=' "$ENV_FILE" | cut -d= -f2- || true)"
+  if [[ -n "$POSTGRES_PASSWORD" ]]; then
+    echo "Reusing the existing POSTGRES_PASSWORD; the database volume is initialised with it."
+    echo "Pass --rotate-db-password to change it, then recreate the postgres_data volume."
+  fi
+fi
+if [[ -z "$POSTGRES_PASSWORD" ]]; then
+  POSTGRES_PASSWORD="$(random_secret)"
+  if [[ $ROTATE_DB_PASSWORD -eq 1 ]]; then
+    echo "WARNING: rotating POSTGRES_PASSWORD. An existing postgres_data volume will"
+    echo "         reject it. Recreate it first, which discards stored feedback:"
+    echo "           docker compose -f infra/docker-compose.yml -f infra/docker-compose.demo.yml down"
+    echo "           docker volume rm realtime-fraud_postgres_data"
+  fi
+fi
+
 GRAFANA_ADMIN_PASSWORD="$(random_secret)"
 FEEDBACK_API_KEY="$(random_secret)"
 DEMO_USER="evaluator"
@@ -153,8 +181,9 @@ DEMO_BASE_URL=$BASE_URL
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 GRAFANA_ADMIN_USER=admin
 GRAFANA_ADMIN_PASSWORD=$GRAFANA_ADMIN_PASSWORD
-DEMO_TRAFFIC_RATE=8
+DEMO_TRAFFIC_RATE=4
 DEMO_FRAUD_RATIO=0.04
+DEMO_USERS=1000000
 EOF
 
 printf '%s' "$FEEDBACK_API_KEY" > "$API_KEY_FILE"

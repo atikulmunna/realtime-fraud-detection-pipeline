@@ -44,6 +44,11 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # Flink's exactly-once sink asks for a 1 hour transaction timeout, and a
+      # broker refuses any producer timeout above transaction.max.timeout.ms,
+      # which defaults to 15 minutes. Without this the scoring job fails
+      # InitProducerId and restarts forever. See docs/contracts_and_guarantees.md.
+      KAFKA_TRANSACTION_MAX_TIMEOUT_MS: 3600000
     healthcheck:
       test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:29092 --list >/dev/null 2>&1"]
       interval: 10s
@@ -238,6 +243,10 @@ services:
         state.checkpoints.dir: file:///opt/flink/checkpoints
     volumes:
       - flink_checkpoints:/opt/flink/checkpoints
+      # The scoring UDFs run here, not in the submitter or the JobMaster, so this
+      # is where the model artifacts have to be readable. It is also the directory
+      # the model-update signal validates promoted files against.
+      - ../models:/opt/fraud/models:ro
     networks: [fraud-backplane]
 
   flink-job:
@@ -249,7 +258,11 @@ services:
         condition: service_healthy
       topic-init:
         condition: service_completed_successfully
-    command: ["flink", "run", "--detached", "--python", "/opt/fraud/src/streaming/flink_job.py"]
+    # -m is required: this container has its own Flink config, in which
+    # jobmanager.rpc.address defaults to localhost. Without it the JobGraph
+    # submission is refused because the submitter looks for a JobManager inside
+    # itself, after the Python job graph has already been built successfully.
+    command: ["flink", "run", "-m", "jobmanager:8081", "--detached", "--python", "/opt/fraud/src/streaming/flink_job.py"]
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       MODEL_DIR: /opt/fraud/models

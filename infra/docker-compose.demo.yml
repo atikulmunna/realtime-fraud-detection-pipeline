@@ -56,12 +56,8 @@ services:
       - "--serve-artifacts"
       - "--static-prefix"
       - "/mlflow"
-    # --static-prefix relocates every route, health included.
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/mlflow/health', timeout=2)"]
-      interval: 10s
-      timeout: 5s
-      retries: 15
+    # --static-prefix moves the UI to /mlflow/ but leaves /health at the root,
+    # so the base healthcheck is already correct and is deliberately not overridden.
     deploy:
       resources:
         limits:
@@ -103,15 +99,14 @@ services:
       - "--storage.tsdb.path=/prometheus"
       - "--web.console.libraries=/usr/share/prometheus/console_libraries"
       - "--web.console.templates=/usr/share/prometheus/consoles"
+      # external-url fixes the links Prometheus generates; route-prefix stays at /
+      # so it keeps serving /metrics and /-/healthy internally. Moving the prefix
+      # into Prometheus itself would break its own self-scrape target
+      # (localhost:9090/metrics) and its healthcheck. Caddy strips /prometheus.
       - "--web.external-url=${DEMO_BASE_URL:?set DEMO_BASE_URL in infra/.env}/prometheus/"
-      - "--web.route-prefix=/prometheus"
+      - "--web.route-prefix=/"
       # A demo does not need long retention, and the root volume is small.
       - "--storage.tsdb.retention.time=12h"
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/prometheus/-/healthy"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
     deploy:
       resources:
         limits:
@@ -178,11 +173,15 @@ services:
       - "--topic"
       - "raw-events"
       - "--rate"
-      - "${DEMO_TRAFFIC_RATE:-8}"
+      - "${DEMO_TRAFFIC_RATE:-4}"
       - "--fraud-ratio"
       - "${DEMO_FRAUD_RATIO:-0.04}"
+      # Large on purpose. txn_velocity_1h is ~always 1 in PaySim, so a small
+      # population makes the per-user counter climb and flags nearly all traffic.
+      # At 4 events/s this keeps about 99% of events at velocity 1, and the
+      # observed anomaly rate tracks DEMO_FRAUD_RATIO. See src/demo/traffic_generator.py.
       - "--users"
-      - "500"
+      - "${DEMO_USERS:-1000000}"
     deploy:
       resources:
         limits:

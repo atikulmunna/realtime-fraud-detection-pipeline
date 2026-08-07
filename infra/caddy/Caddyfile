@@ -12,7 +12,6 @@
 # scripts/deploy/make-secrets.sh. It is imported rather than injected through
 # the environment because a bcrypt hash is full of '$' characters, which
 # Compose would try to interpolate.
-
 {
 	admin off
 	auto_https off
@@ -41,7 +40,10 @@
 
 	# Prometheus, MLflow, and the Flink REST API ship no authentication of their
 	# own, so the proxy supplies it.
-	handle /prometheus* {
+	# Prometheus runs with route-prefix / so its self-scrape and healthcheck keep
+	# working, so the prefix is stripped here rather than inside Prometheus.
+	redir /prometheus /prometheus/
+	handle_path /prometheus/* {
 		import /etc/caddy/auth.conf
 		reverse_proxy prometheus:9090
 	}

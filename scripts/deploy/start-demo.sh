@@ -55,7 +55,10 @@ echo "==> Building application and Flink images"
 "${COMPOSE[@]}" build
 
 echo "==> Preflight: loading model artifacts inside the Flink image"
-docker run --rm \
+# MSYS_NO_PATHCONV stops Git Bash on Windows from rewriting the -v argument,
+# which otherwise mounts an empty directory and makes this look like a model
+# problem. It is an unused variable on Linux.
+MSYS_NO_PATHCONV=1 docker run --rm \
   -v "$REPO_ROOT/models:/opt/fraud/models:ro" \
   --entrypoint python3 \
   realtime-fraud/flink:local -c '
@@ -64,21 +67,30 @@ import sys, warnings, joblib, numpy, sklearn
 # fraud demo is worse than a crash. Treat it as a failure, not a note.
 warnings.simplefilter("error", UserWarning)
 print("  flink image: numpy", numpy.__version__, "| scikit-learn", sklearn.__version__)
-failed = []
+missing, unloadable = [], []
 for name in ("isolation_forest_v1", "autoencoder_v1", "sgd_classifier_v1"):
     path = f"/opt/fraud/models/{name}.joblib"
     try:
         joblib.load(path)
         print("  OK     ", name)
+    except FileNotFoundError:
+        missing.append(name)
+        print("  MISSING", name)
     except Exception as exc:
-        failed.append(name)
+        unloadable.append(name)
         print("  FAILED ", name, type(exc).__name__, exc)
-if failed:
-    print("\nThe Flink image cannot load:", ", ".join(failed))
+# The caller already verified these exist on the host, so absence inside the
+# container means the bind mount did not take, not that training is needed.
+if missing:
+    print("\nNot visible inside the container:", ", ".join(missing))
+    print("They exist on the host, so the bind mount of ./models failed.")
+    print("Check Docker file sharing for this path rather than retraining.")
+if unloadable:
+    print("\nThe Flink image cannot load:", ", ".join(unloadable))
     print("Artifacts must be trained with the same numpy and scikit-learn this image")
     print("installs. Retrain with: uv run python -m src.models.train_{if,ae,sgd}")
     print("See docs/aws_demo_deployment.md, section \"The numpy ceiling\".")
-    sys.exit(1)
+sys.exit(1 if (missing or unloadable) else 0)
 ' || fail "Model preflight failed. The streaming job would crash on startup."
 
 echo "==> Starting the stack"

@@ -25,6 +25,18 @@ from confluent_kafka import Producer
 BENIGN_TYPES = ("PAYMENT", "CASH_IN", "DEBIT")
 DRAINING_TYPES = ("TRANSFER", "CASH_OUT")
 
+# The user population is deliberately far larger than the number of events a demo
+# will emit, so a user rarely transacts twice inside one UTC hour.
+#
+# This matters because txn_velocity_1h is degenerate in PaySim: it is 1 for
+# essentially every training row (p99 = 1, max = 2). The models therefore treat
+# any velocity above 1 as strongly anomalous, and a small population makes the
+# Flink job's per-user counter climb until nearly all traffic is flagged. With
+# this default about 99% of events carry velocity 1 and the observed anomaly rate
+# tracks FRAUD_RATIO instead. Only users that actually transact create Flink
+# state, so a large population costs roughly nothing.
+DEFAULT_USERS = 1_000_000
+
 
 class TransactionPublisher(Protocol):
     def publish(self, payload: dict[str, Any]) -> None: ...
@@ -75,7 +87,7 @@ def generate_transaction(
     rng: random.Random,
     *,
     now: datetime,
-    users: int = 200,
+    users: int = DEFAULT_USERS,
     fraud_ratio: float = 0.03,
 ) -> dict[str, Any]:
     """Build one contract-valid event.
@@ -88,7 +100,7 @@ def generate_transaction(
     if not 0.0 <= fraud_ratio <= 1.0:
         raise ValueError("fraud_ratio must be between 0.0 and 1.0")
 
-    user_id = f"C{rng.randrange(users):05d}"
+    user_id = f"C{rng.randrange(users):07d}"
     draining = rng.random() < fraud_ratio
 
     if draining:
@@ -118,7 +130,7 @@ def run_generator(
     *,
     rate: float = 5.0,
     duration: float | None = 60.0,
-    users: int = 200,
+    users: int = DEFAULT_USERS,
     fraud_ratio: float = 0.03,
     seed: int | None = None,
     clock: Callable[[], float] = time.monotonic,
@@ -190,7 +202,7 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Seconds to run. Omit to run until stopped.",
     )
-    parser.add_argument("--users", type=int, default=200)
+    parser.add_argument("--users", type=int, default=DEFAULT_USERS)
     parser.add_argument("--fraud-ratio", type=float, default=0.03)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true", help="Generate without connecting to Kafka.")

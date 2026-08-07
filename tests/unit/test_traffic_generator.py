@@ -1,5 +1,6 @@
 import json
 import random
+from collections import Counter
 from datetime import UTC, datetime
 
 import pytest
@@ -86,7 +87,20 @@ def test_same_seed_reproduces_the_same_event_stream():
 def test_user_ids_stay_within_the_requested_population():
     rng = random.Random(5)
     ids = {generate_transaction(rng, now=FIXED_NOW, users=4)["user_id"] for _ in range(100)}
-    assert ids <= {"C00000", "C00001", "C00002", "C00003"}
+    assert ids <= {"C0000000", "C0000001", "C0000002", "C0000003"}
+
+
+def test_default_population_keeps_repeat_users_rare():
+    """The models were trained on data where txn_velocity_1h is ~always 1.
+
+    A small population makes the Flink job's per-user counter climb and flags
+    nearly all traffic, so the default has to keep repeats within an hour rare.
+    """
+    rng = random.Random(9)
+    hourly_events = 4 * 3600
+    seen = Counter(generate_transaction(rng, now=FIXED_NOW)["user_id"] for _ in range(hourly_events // 4))
+    repeat_rate = 1 - (len(seen) / sum(seen.values()))
+    assert repeat_rate < 0.02, f"repeat-user rate {repeat_rate:.2%} would inflate txn_velocity_1h"
 
 
 @pytest.mark.parametrize(

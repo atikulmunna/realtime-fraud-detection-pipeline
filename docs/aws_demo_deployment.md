@@ -172,6 +172,24 @@ docker compose -f infra/docker-compose.yml -f infra/docker-compose.demo.yml \
     --bootstrap-servers kafka:29092 --rate 40 --duration 60 --fraud-ratio 0.2
 ```
 
+## Why DEMO_USERS is a million
+
+`txn_velocity_1h` is degenerate in PaySim: it is 1 for essentially every training row (p50, p90, and p99 are all 1; the maximum is 2). The models therefore learned that any velocity above 1 is strongly anomalous.
+
+The Flink job computes this feature for real from the live stream, so it is a genuine train/serve skew: constant during training, variable in serving. With a small user population the per-user counter climbs through the UTC hour and the observed anomaly rate approaches 100 percent, which makes the dashboard look broken.
+
+Sizing the population far above the event volume keeps repeats rare and holds the feature in the distribution the models were trained on. Measured on the running stack:
+
+| Configuration | Events at velocity 1 | Anomaly rate |
+| --- | --- | --- |
+| 8/s, 500 users | 1.7% | 98% |
+| 8/s, 20000 users | 53% | 51% |
+| 4/s, 1000000 users (default) | 99.3% | about 5% |
+
+Only users that actually transact create Flink state, so a large population costs almost nothing: about 14000 distinct keys per hour at the default rate.
+
+This is a property of the dataset and the feature, not of the deployment. A production system would either drop the feature or train on data where it varies. Raising `DEMO_TRAFFIC_RATE` without raising `DEMO_USERS` will reintroduce the inflated anomaly rate.
+
 ## Shutting down
 
 ```bash
