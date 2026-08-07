@@ -18,7 +18,13 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-COMPOSE=(docker compose -f infra/docker-compose.yml -f infra/docker-compose.demo.yml --profile streaming)
+# Only flink-job carries the streaming profile, so the base array brings up
+# everything else without submitting a job. Submission is guarded separately,
+# because each recreation of that one-shot container submits another copy and
+# duplicates starve each other of task slots.
+COMPOSE=(docker compose -f infra/docker-compose.yml -f infra/docker-compose.demo.yml)
+COMPOSE_JOB=(docker compose -f infra/docker-compose.yml -f infra/docker-compose.demo.yml --profile streaming)
+FLINK_JOB_NAME="realtime-fraud-scoring"
 REQUIRED_MODELS=(
   models/isolation_forest_v1.joblib
   models/autoencoder_v1.joblib
@@ -117,17 +123,31 @@ until curl -fsS -o /dev/null http://localhost/grafana/api/health 2>/dev/null; do
   sleep 5
 done
 
-echo "==> Service status"
-"${COMPOSE[@]}" ps
+# Submit the scoring job only when one is not already on the cluster. Re-running
+# this script otherwise stacks duplicate jobs, and with a fixed number of task
+# slots the extras sit in RESTARTING forever.
+echo "==> Checking for an existing scoring job"
+running_jobs="$(curl -fsS --max-time 10 http://localhost:8081/jobs/overview 2>/dev/null \
+  | grep -o "\"name\":\"$FLINK_JOB_NAME\",\"state\":\"RUNNING\"" | wc -l || echo 0)"
 
-# The streaming job is submitted by a one-shot container. A non-zero exit means
-# the job never reached the cluster, which leaves the dashboard empty.
-if "${COMPOSE[@]}" ps --all --format '{{.Service}} {{.State}} {{.ExitCode}}' \
-    | grep -qE '^flink-job exited [^0]'; then
-  echo
-  echo "WARNING: flink-job exited non-zero. The scoring job is not running."
-  echo "Inspect with: ${COMPOSE[*]} logs flink-job"
+if [[ "${running_jobs:-0}" -gt 0 ]]; then
+  echo "    '$FLINK_JOB_NAME' is already RUNNING. Not submitting another."
+else
+  echo "==> Submitting the scoring job"
+  "${COMPOSE_JOB[@]}" up -d --force-recreate flink-job
+  sleep 20
+  # A non-zero exit means the job never reached the cluster, which leaves the
+  # dashboard empty while every other service looks healthy.
+  if "${COMPOSE_JOB[@]}" ps --all --format '{{.Service}} {{.State}} {{.ExitCode}}' \
+      | grep -qE '^flink-job exited [^0]'; then
+    echo
+    echo "WARNING: flink-job exited non-zero. The scoring job is not running."
+    echo "Inspect with: ${COMPOSE_JOB[*]} logs flink-job"
+  fi
 fi
+
+echo "==> Service status"
+"${COMPOSE_JOB[@]}" ps
 
 BASE_URL="$(grep -E '^DEMO_BASE_URL=' infra/.env | cut -d= -f2-)"
 cat <<EOF
