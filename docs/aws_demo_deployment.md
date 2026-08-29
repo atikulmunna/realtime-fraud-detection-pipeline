@@ -31,7 +31,7 @@ The decisive variable is uptime, not instance size.
 
 Run the instance only around evaluation windows. A stopped instance costs only its EBS volume, roughly $2.40 per month. Stopping and starting is the entire cost strategy: leaving it running for a month is the only way to breach the budget.
 
-Set a billing alert before launching: AWS Billing, Budgets, then a monthly cost budget at $40 with an alert at 50 percent.
+Set a billing alert before launching: AWS Billing, Budgets, then a monthly cost budget at $40. On a credit-funded account it must be created with `IncludeCredit: false` or it can never fire. See [Automatic shutdown](#automatic-shutdown), and note that a budget alerts but never caps: the auto-stop is what actually limits cost.
 
 ## Running on demand
 
@@ -189,6 +189,36 @@ Sizing the population far above the event volume keeps repeats rare and holds th
 Only users that actually transact create Flink state, so a large population costs almost nothing: about 14000 distinct keys per hour at the default rate.
 
 This is a property of the dataset and the feature, not of the deployment. A production system would either drop the feature or train on data where it varies. Raising `DEMO_TRAFFIC_RATE` without raising `DEMO_USERS` will reintroduce the inflated anomaly rate.
+
+## Automatic shutdown
+
+The only way this demo becomes expensive is leaving the instance running after an evaluation. `start-demo.sh` therefore arms an OS-level power-off by default, four hours out. Powering off an EBS-backed instance stops it, which ends compute billing; the volume survives so the demo can be restarted.
+
+```bash
+scripts/deploy/arm-autostop.sh 8          # extend to 8 hours
+scripts/deploy/arm-autostop.sh --status   # when will it power off
+scripts/deploy/arm-autostop.sh --cancel   # run until stopped manually
+```
+
+Change the default per run with `DEMO_AUTOSTOP_HOURS=8 scripts/deploy/start-demo.sh`, or disable it with `DEMO_AUTOSTOP_HOURS=0`. Re-running `start-demo.sh` re-arms the timer rather than stacking schedules.
+
+**This depends on the instance's shutdown behaviour being `stop`, which is the EC2 default.** If it is set to `terminate`, an automatic power-off destroys the instance and its volume. Confirm before relying on it:
+
+```bash
+aws ec2 describe-instance-attribute --instance-id <id>   --attribute instanceInitiatedShutdownBehavior
+```
+
+### Budgets do not cap spend, and credits hide usage
+
+An AWS budget raises an alert; it never stops resources. Worse, budgets subtract credits by default, so on a credit-funded account the actual spend reads `$0.00` and a threshold alert can never fire no matter how much usage accrues. Create the budget with `IncludeCredit: false` to track gross usage:
+
+```bash
+aws budgets update-budget --account-id <id> --new-budget   '{"BudgetName":"...","BudgetLimit":{"Amount":"40","Unit":"USD"},
+    "TimeUnit":"MONTHLY","BudgetType":"COST",
+    "CostTypes":{"IncludeCredit":false}}'
+```
+
+Treat the budget as a smoke alarm and the auto-stop as the thing that actually limits cost.
 
 ## Shutting down
 

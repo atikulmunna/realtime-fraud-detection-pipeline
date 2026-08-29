@@ -159,6 +159,17 @@ fi
 echo "==> Service status"
 "${COMPOSE_JOB[@]}" ps
 
+# Arm the auto power-off. A forgotten running instance is the only way this demo
+# gets expensive, so the default is on and has to be opted out of, not into.
+# Re-running this script re-arms rather than stacking schedules.
+AUTOSTOP_HOURS="${DEMO_AUTOSTOP_HOURS:-4}"
+if [[ "$AUTOSTOP_HOURS" == "0" || "$AUTOSTOP_HOURS" == "off" ]]; then
+  echo "==> Auto-stop disabled (DEMO_AUTOSTOP_HOURS=$AUTOSTOP_HOURS). Stop the instance yourself."
+else
+  echo "==> Arming auto-stop"
+  scripts/deploy/arm-autostop.sh "$AUTOSTOP_HOURS" | head -2
+fi
+
 BASE_URL="$(grep -E '^DEMO_BASE_URL=' infra/.env | cut -d= -f2-)"
 cat <<EOF
 
@@ -175,4 +186,8 @@ Full Flink console over an SSH tunnel:
   ssh -i <key.pem> -L 8081:localhost:8081 ubuntu@<public-ip>   then open http://localhost:8081
 
 Stop the stack without losing data:  scripts/deploy/stop-demo.sh
+
+This instance powers itself off in $AUTOSTOP_HOURS hour(s), which stops compute
+billing. Extend with: scripts/deploy/arm-autostop.sh 8
+Cancel with:          scripts/deploy/arm-autostop.sh --cancel
 EOF
